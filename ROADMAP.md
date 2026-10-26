@@ -15,9 +15,9 @@ Every step ends with a commit and push. Tick the box when its "done when" check 
   `data/build_manuals.py` renders 6 synthetic manuals (one per machine type) to PDF with PyMuPDF; thresholds are imported from `generate_db.PROFILES`. Each has specs, the alarm thresholds that match `schema.sql`, a troubleshooting table and a maintenance schedule. Synthetic manuals avoid copyright problems and stay consistent with the database.
   Done when: `data/manuals/*.pdf` exists and tests confirm thresholds match the DB, every sensor has a troubleshooting section, and part numbers survive text extraction (`ida.manuals.extract_pages`).
 
-- [ ] **Step 3: MCP server and `query_database`** (4 h)
+- [x] **Step 3: MCP server and `query_database`** (4 h)
   `src/ida/mcp_server/`: FastMCP app, `SQLGenerator` interface (fine-tuned model plus LLM fallback), sqlglot validator, read-only executor, dataset cache.
-  Done when: unit tests cover the validator (rejects DELETE/PRAGMA/ATTACH/multi-statement), the read-only connection, the timeout and truncation. The tool can be called from MCP Inspector.
+  Done when: unit tests cover the validator (rejects DELETE/PRAGMA/ATTACH/multi-statement), the read-only connection, the timeout and truncation. `scripts/try_query_database.py` calls the tool over MCP stdio (also works in `mcp dev`).
 
 - [ ] **Step 4: `search_manuals`** (3 h)
   Ingestion script (PyMuPDF → chunks → bge-small → Chroma) plus the tool with a machine_type filter.

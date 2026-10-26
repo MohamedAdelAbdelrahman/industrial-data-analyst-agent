@@ -27,6 +27,15 @@ pip install -e ".[all]"           # extras: rag, sandbox, obs, ui, dev
 pytest
 ```
 
+## Try it
+```bash
+python data/generate_db.py --out data/sensors.db            # build the DB once
+python scripts/try_query_database.py                         # MCP server + 3 sample questions
+python scripts/try_query_database.py "Average spindle temperature per CNC mill last week"
+pytest            # unit tests (no API calls)
+pytest --live     # also runs tests that call the LLM
+```
+
 ## Data
 `data/generate_db.py` builds a synthetic but internally consistent database: alarms are derived from readings and thresholds, and corrective maintenance is linked to critical alarms. It also contains deliberate SQL traps such as NULL readings, active alarms and a decommissioned machine.
 

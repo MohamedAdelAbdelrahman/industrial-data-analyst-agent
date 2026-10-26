@@ -1,20 +1,12 @@
 """Smoke tests: the generated DB is internally consistent (alarms <-> readings <-> maintenance)."""
 import sqlite3
-import subprocess
-import sys
-from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-
 
 @pytest.fixture(scope="module")
-def db(tmp_path_factory):
-    out = tmp_path_factory.mktemp("db") / "sensors.db"
-    subprocess.run([sys.executable, str(ROOT / "data" / "generate_db.py"), "--out", str(out), "--days", "10"],
-                   check=True, capture_output=True)
-    con = sqlite3.connect(out)
+def db(small_db):
+    con = sqlite3.connect(small_db)
     yield con
     con.close()
 
