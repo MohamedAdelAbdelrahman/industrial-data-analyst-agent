@@ -6,6 +6,7 @@ Run:
     mcp dev src/ida/mcp_server/server.py                 # MCP Inspector
 """
 import argparse
+import sys
 from functools import lru_cache
 
 from mcp.server.fastmcp import FastMCP
@@ -93,7 +94,14 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--transport", choices=["stdio", "http"], default="stdio")
     args = ap.parse_args()
+    # build everything on the main thread: lazy imports inside MCP worker threads stall on Windows
     _manual_index().warm_up()
+    _query_tool()
+    try:
+        _python_tool()
+    except Exception as e:  # noqa: BLE001 -- Docker may be off; run_python then reports the error per call
+        _python_tool.cache_clear()
+        print(f"run_python unavailable at startup: {e}", file=sys.stderr)
     mcp.run(transport="streamable-http" if args.transport == "http" else "stdio")
 
 

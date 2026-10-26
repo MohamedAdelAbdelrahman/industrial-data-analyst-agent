@@ -30,9 +30,10 @@ Every step ends with a commit and push. Tick the box when its "done when" check 
 
 ## Week 2: agent, UI and evaluation
 
-- [ ] **Step 6: LangGraph agent** (5 h)
+- [x] **Step 6: LangGraph agent** (5 h)
   State, planner, executor, step_check, replanner, answerer, connected to MCP through `langchain-mcp-adapters`, with budgets.
-  Done when: 5 sample questions (one per category) are answered end-to-end from the CLI.
+  Done when: 5 sample questions (one per category) are answered end-to-end from the CLI (`python -m ida.agent.run --demo`).
+  Result: 4/5 correct plus the refusal; Q4 misses a tie (kept as a baseline failure for the eval).
 
 - [ ] **Step 6b: Fine-tune the Text-to-SQL model** (6 h, split across a and b below)
   Until this step, `query_database` uses Gemini to write SQL (`SQL_BACKEND=llm`).

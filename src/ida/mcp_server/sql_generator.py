@@ -9,12 +9,14 @@ from typing import Protocol
 
 import httpx
 
-from ida.config import Settings, get_settings
+from ida.config import DATA_END, Settings, get_settings
 
-INSTRUCTIONS = """You translate questions about an industrial sensor database into one SQLite SELECT query.
+INSTRUCTIONS = f"""You translate questions about an industrial sensor database into one SQLite SELECT query.
 Rules:
 - Use only the tables and columns in the schema.
 - Timestamps are TEXT 'YYYY-MM-DD HH:MM:SS' in UTC; compare them as strings or with date()/datetime().
+- The data ends at {DATA_END}. Treat that as "now" ("today", "last week", "currently") and never use
+  date('now') or CURRENT_TIMESTAMP.
 - readings.value is NULL when quality = 'bad'.
 - An alarm is active when cleared_at IS NULL.
 - Return only the SQL, no explanation."""

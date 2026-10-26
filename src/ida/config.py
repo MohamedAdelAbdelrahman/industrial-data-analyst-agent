@@ -8,6 +8,9 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(ROOT / ".env")
 
+# The synthetic data ends here (generate_db.py --end); "now" / "last week" are relative to it.
+DATA_END = "2026-10-01 00:00:00"
+
 
 def _env(name: str, default: str) -> str:
     return os.environ.get(name) or default
