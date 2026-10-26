@@ -42,7 +42,7 @@ Every step ends with a commit and push. Tick the box when its "done when" check 
   - **c. Serving** (1 h, local): `ollama create ida-sql -f finetune/Modelfile`, then set `SQL_BACKEND=finetuned`.
   Done when: execution accuracy on the test split is reported for base Qwen, fine-tuned Qwen and Gemini.
 
-- [ ] **Step 7: Langfuse tracing** (1 h)
+- [x] **Step 7: Langfuse tracing** (1 h)
   Self-host with docker compose or use the cloud free tier. Add the callback handler and task tags.
   Done when: a run shows one trace per question with node and tool spans plus cost.
 

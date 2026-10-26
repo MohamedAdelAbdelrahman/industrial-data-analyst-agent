@@ -11,6 +11,7 @@ import time
 
 from ida.agent.graph import build_graph, default_models
 from ida.agent.mcp_client import mcp_tools
+from ida.agent.tracing import flush, traced_run
 
 DEMO = [
     "Which compressor had the most process alarms (HIGH or HIGH_HIGH), and how many?",
@@ -58,19 +59,23 @@ async def ask(graph, question: str) -> dict:
     print(f"\n{'=' * 100}\nQ: {question}\n{'=' * 100}")
     start = time.monotonic()
     final: dict = {"question": question}
-    try:
-        async for chunk in graph.astream({"question": question}, stream_mode="updates",
-                                         config={"recursion_limit": 100}):
-            for node, update in chunk.items():
-                print_update(node, update, len(final.get("tool_log", [])))
-                final |= update
-    except Exception as e:  # noqa: BLE001 -- report and continue with the next question
-        final |= {"status": "error", "final_answer": f"Run failed: {type(e).__name__}: {str(e)[:300]}"}
+    with traced_run(question, tags=["cli"]) as trace:
+        try:
+            async for chunk in graph.astream({"question": question}, stream_mode="updates",
+                                             config=trace.config):
+                for node, update in chunk.items():
+                    print_update(node, update, len(final.get("tool_log", [])))
+                    final |= update
+        except Exception as e:  # noqa: BLE001 -- report and continue with the next question
+            final |= {"status": "error", "final_answer": f"Run failed: {type(e).__name__}: {str(e)[:300]}"}
+    final["trace_url"] = trace.url
     tokens = sum(u["input"] + u["output"] for u in final.get("usage", {}).values())
     llm_calls = sum(u["calls"] for u in final.get("usage", {}).values())
     print(f"\n[{final.get('status')}] {final.get('final_answer')}")
     print(f"\n-- {final.get('tool_calls', 0)} tool calls, {llm_calls} LLM calls, {tokens:,} tokens, "
           f"{time.monotonic() - start:.1f}s")
+    if trace.url:
+        print(f"-- trace: {trace.url}")
     return final
 
 
@@ -79,6 +84,7 @@ async def main(questions: list[str]) -> None:
         graph = build_graph(default_models(tools), tools)
         for q in questions:
             await ask(graph, q)
+    flush()
 
 
 if __name__ == "__main__":
