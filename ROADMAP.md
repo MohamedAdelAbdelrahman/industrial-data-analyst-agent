@@ -34,11 +34,11 @@ Every step ends with a commit and push. Tick the box when its "done when" check 
   Done when: 5 sample questions (one per category) are answered end-to-end from the CLI.
 
 - [ ] **Step 6b: Fine-tune the Text-to-SQL model** (6 h, split across a and b below)
-  Until this step, `query_database` uses Claude to write SQL (`SQL_BACKEND=llm`).
-  - **a. Training data** (2 h, local): Claude writes about 1,500 question→SQL pairs for `schema.sql` covering joins, aggregates, time windows and the NULL/active-alarm traps. **Every SQL is executed** on `sensors.db` and only pairs that run and return rows are kept. A held-out test split of about 150 pairs is never trained on. Output: `finetune/data/{train,test}.jsonl`.
+  Until this step, `query_database` uses Gemini to write SQL (`SQL_BACKEND=llm`).
+  - **a. Training data** (2 h, local): Gemini (free tier) writes about 1,500 question→SQL pairs for `schema.sql` covering joins, aggregates, time windows and the NULL/active-alarm traps. **Every SQL is executed** on `sensors.db` and only pairs that run and return rows are kept. A held-out test split of about 150 pairs is never trained on. Output: `finetune/data/{train,test}.jsonl`.
   - **b. Training** (3 h, Google Colab free T4 GPU): QLoRA with Unsloth on `Qwen2.5-Coder-1.5B-Instruct` from Hugging Face. Notebook: `finetune/train_colab.ipynb`. Export a GGUF (q4_k_m) and download it.
   - **c. Serving** (1 h, local): `ollama create ida-sql -f finetune/Modelfile`, then set `SQL_BACKEND=finetuned`.
-  Done when: execution accuracy on the test split is reported for base Qwen, fine-tuned Qwen and Claude.
+  Done when: execution accuracy on the test split is reported for base Qwen, fine-tuned Qwen and Gemini.
 
 - [ ] **Step 7: Langfuse tracing** (1 h)
   Self-host with docker compose or use the cloud free tier. Add the callback handler and task tags.

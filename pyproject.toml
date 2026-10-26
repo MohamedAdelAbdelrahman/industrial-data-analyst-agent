@@ -12,6 +12,8 @@ dependencies = [
     "langgraph",
     "langchain-core",
     "langchain-mcp-adapters",
+    "langchain-google-genai",
+    "python-dotenv",
 ]
 
 [project.optional-dependencies]
@@ -19,6 +21,7 @@ rag = ["pymupdf", "chromadb", "sentence-transformers"]
 sandbox = ["docker"]
 obs = ["langfuse"]
 ui = ["streamlit"]
+anthropic = ["langchain-anthropic"]
 dev = ["pytest", "ruff"]
 all = ["industrial-data-analyst[rag,sandbox,obs,ui,dev]"]
 
