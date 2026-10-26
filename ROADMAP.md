@@ -11,9 +11,9 @@ Every step ends with a commit and push. Tick the box when its "done when" check 
   Python 3.12 venv (`py -3.12 -m venv .venv`, then `pip install -e ".[all]"`). Extras: rag, sandbox, obs, ui, dev.
   Done when: `pytest` passes (6 DB-consistency smoke tests) and `python data/generate_db.py` works inside the venv.
 
-- [ ] **Step 2: Manuals corpus** (2 h)
-  Write 6 short synthetic manuals (one per machine type) as Markdown and convert them to PDF. Each has specs, the alarm thresholds that match `schema.sql`, a troubleshooting table and a maintenance schedule. Synthetic manuals avoid copyright problems and stay consistent with the database.
-  Done when: `data/manuals/*.pdf` exists and each manual has at least 1 troubleshooting entry per sensor type.
+- [x] **Step 2: Manuals corpus** (2 h)
+  `data/build_manuals.py` renders 6 synthetic manuals (one per machine type) to PDF with PyMuPDF; thresholds are imported from `generate_db.PROFILES`. Each has specs, the alarm thresholds that match `schema.sql`, a troubleshooting table and a maintenance schedule. Synthetic manuals avoid copyright problems and stay consistent with the database.
+  Done when: `data/manuals/*.pdf` exists and tests confirm thresholds match the DB, every sensor has a troubleshooting section, and part numbers survive text extraction (`ida.manuals.extract_pages`).
 
 - [ ] **Step 3: MCP server and `query_database`** (4 h)
   `src/ida/mcp_server/`: FastMCP app, `SQLGenerator` interface (fine-tuned model plus LLM fallback), sqlglot validator, read-only executor, dataset cache.

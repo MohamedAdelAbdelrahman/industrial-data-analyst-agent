@@ -32,7 +32,10 @@ pytest
 
 ```bash
 python data/generate_db.py --out data/sensors.db --seed 42 --days 60
+python data/build_manuals.py      # -> data/manuals/*.pdf (committed)
 ```
+
+The manuals are synthetic. Their alarm thresholds come from the same profiles as the database, and they include troubleshooting tables, alarm-response procedures, maintenance intervals and part numbers.
 
 ## Layout (target)
 ```

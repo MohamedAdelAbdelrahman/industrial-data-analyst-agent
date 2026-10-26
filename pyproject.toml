@@ -36,4 +36,7 @@ testpaths = ["tests"]
 line-length = 110
 
 [tool.ruff.lint]
-ignore = ["C408"]  # dict(...) with keyword args is fine
+ignore = [
+    "C408",    # dict(...) with keyword args is fine
+    "ISC004",  # implicit concatenation is how long strings are wrapped here
+]
