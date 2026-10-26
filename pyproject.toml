@@ -1,0 +1,31 @@
+[project]
+name = "industrial-data-analyst"
+version = "0.1.0"
+description = "LangGraph planner/executor agent with MCP tools for industrial sensor data"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy",
+    "langgraph",
+    "langchain-core",
+    "langchain-mcp-adapters",
+    "mcp[cli]",
+    "sqlglot",
+    "pymupdf",
+    "chromadb",
+    "sentence-transformers",
+    "docker",
+    "langfuse",
+    "streamlit",
+    "pyyaml",
+    "pandas",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

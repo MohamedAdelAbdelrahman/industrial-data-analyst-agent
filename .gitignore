@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+*.egg-info/
+.dist/
+
+# generated artefacts
+*.db
+data/index/
+eval/results/*.raw.json
+.pytest_cache/
+.ruff_cache/
