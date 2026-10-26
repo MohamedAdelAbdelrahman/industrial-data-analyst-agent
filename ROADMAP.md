@@ -7,9 +7,9 @@ Every step ends with a commit and push. Tick the box when its "done when" check 
 - [x] **Step 0: Repo and data generator** (1 h)
   Done when: the repo exists, `data/generate_db.py` builds `sensors.db`, and the design doc is written.
 
-- [ ] **Step 1: Environment** (1 h)
-  Install Python 3.11 (`uv python install 3.11`, then `uv venv` and `uv pip install -e ".[dev]"`).
-  Done when: `pytest` runs (no tests yet) and `python data/generate_db.py` works inside the venv.
+- [x] **Step 1: Environment** (1 h)
+  Python 3.12 venv (`py -3.12 -m venv .venv`, then `pip install -e ".[all]"`). Extras: rag, sandbox, obs, ui, dev.
+  Done when: `pytest` passes (6 DB-consistency smoke tests) and `python data/generate_db.py` works inside the venv.
 
 - [ ] **Step 2: Manuals corpus** (2 h)
   Write 6 short synthetic manuals (one per machine type) as Markdown and convert them to PDF. Each has specs, the alarm thresholds that match `schema.sql`, a troubleshooting table and a maintenance schedule. Synthetic manuals avoid copyright problems and stay consistent with the database.

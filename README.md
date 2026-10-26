@@ -17,6 +17,16 @@ The project also covers Langfuse tracing, layered guardrails, a Streamlit UI tha
 - "Plot the spindle temperature of CNC-Mill-03 around its last HIGH_HIGH alarm."
 - "What was the total corrective maintenance cost per plant, and which machine type drives it?"
 
+## Setup
+Requires Python ≥ 3.11 and Docker (for `run_python`).
+
+```bash
+py -3.12 -m venv .venv            # or: python3.12 -m venv .venv
+.venv\Scripts\activate            # Linux/macOS: source .venv/bin/activate
+pip install -e ".[all]"           # extras: rag, sandbox, obs, ui, dev
+pytest
+```
+
 ## Data
 `data/generate_db.py` builds a synthetic but internally consistent database: alarms are derived from readings and thresholds, and corrective maintenance is linked to critical alarms. It also contains deliberate SQL traps such as NULL readings, active alarms and a decommissioned machine.
 

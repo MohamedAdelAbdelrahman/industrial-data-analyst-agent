@@ -5,23 +5,22 @@ description = "LangGraph planner/executor agent with MCP tools for industrial se
 requires-python = ">=3.11"
 dependencies = [
     "numpy",
+    "pandas",
+    "pyyaml",
+    "sqlglot",
+    "mcp[cli]",
     "langgraph",
     "langchain-core",
     "langchain-mcp-adapters",
-    "mcp[cli]",
-    "sqlglot",
-    "pymupdf",
-    "chromadb",
-    "sentence-transformers",
-    "docker",
-    "langfuse",
-    "streamlit",
-    "pyyaml",
-    "pandas",
 ]
 
 [project.optional-dependencies]
+rag = ["pymupdf", "chromadb", "sentence-transformers"]
+sandbox = ["docker"]
+obs = ["langfuse"]
+ui = ["streamlit"]
 dev = ["pytest", "ruff"]
+all = ["industrial-data-analyst[rag,sandbox,obs,ui,dev]"]
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -29,3 +28,12 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
+
+[tool.ruff.lint]
+ignore = ["C408"]  # dict(...) with keyword args is fine
