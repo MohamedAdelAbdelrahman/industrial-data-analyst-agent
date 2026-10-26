@@ -27,6 +27,7 @@ class Settings:
     db_path: Path = field(default_factory=lambda: Path(_env("DB_PATH", str(ROOT / "data" / "sensors.db"))))
     schema_path: Path = ROOT / "data" / "schema.sql"
     dataset_dir: Path = field(default_factory=lambda: Path(_env("DATASET_DIR", str(ROOT / "data" / "cache" / "datasets"))))
+    artifacts_dir: Path = field(default_factory=lambda: Path(_env("ARTIFACTS_DIR", str(ROOT / "data" / "cache" / "artifacts"))))
     manuals_dir: Path = ROOT / "data" / "manuals"
     index_dir: Path = field(default_factory=lambda: Path(_env("INDEX_DIR", str(ROOT / "data" / "index"))))
 

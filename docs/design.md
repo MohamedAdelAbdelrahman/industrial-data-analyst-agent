@@ -100,11 +100,12 @@ Uses PyMuPDF for page-aware chunking (about 500 tokens with overlap), a local em
 ```
 run_python(code: str, dataset_ids: list[str] = [], timeout_s: int = 20) -> {
   "stdout": str, "stderr": str, "exit_code": int, "timed_out": bool,
-  "images": [{"name": str, "png_base64": str}]   # any *.png written to /out
+  "images": [{"name": str, "path": str}],        # any *.png written to /out (cwd)
+  "oom_killed": bool, "duration_s": float, "run_id": str
 }
 ```
 Datasets are mounted read-only at `/data/<dataset_id>.csv`, so large query results never pass through the LLM context.
-Docker flags: `--network none --read-only --tmpfs /tmp --memory 512m --cpus 1 --pids-limit 64 --user 1000:1000 --cap-drop ALL`. The image has pandas, numpy, matplotlib and scipy preinstalled. The wall-clock timeout kills the container. stdout and stderr are capped at 10 kB.
+Docker flags: `--network none --read-only --tmpfs /tmp --memory 512m --memory-swap 512m --cpus 1 --pids-limit 64 --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges`. A fresh container per run (about 1.2 s overhead). The image has pandas, numpy, matplotlib and scipy preinstalled. The wall-clock timeout kills the container. stdout and stderr are capped at 10 kB.
 
 ## 3. Guardrails (defence in depth)
 | Layer | What |
@@ -135,3 +136,5 @@ Metrics per run: success rate (overall and per category), avg steps / tool calls
 | 4 | Retrieval on 17 queries: recall@1 0.88, recall@3 0.94, MRR 0.91. The one miss is a vocabulary gap ("what must the operator do" vs "reduce load or stop…") | Tried cross-encoder reranking (bge-reranker-base, ms-marco-MiniLM-L-6): recall@1 0.88 → 0.94, but the miss stays at rank 7 and it costs 0.5–5 s/query on CPU. **Not adopted** at this corpus size |
 | 4 | MCP stdio server on Windows deadlocked when torch/scipy were first imported inside a tool call (worker thread) | Load the embedding model and index at server start on the main thread (`ManualIndex.warm_up`), and load it with `local_files_only` to skip the Hub check (~20 s) |
 | 4 | Gemini client retries 6× with backoff by default, so a rate limit looks like a multi-minute hang | `timeout=60, max_retries=2`; generator failures are returned as a tool `error` |
+| 5 | Returning charts as base64 would put thousands of tokens into the LLM context per image | `run_python` returns PNG **paths** (copied to `data/cache/artifacts/<run_id>/`); the UI loads them from disk |
+| 5 | Isolation verified by tests: network unreachable, DNS fails, 1.5 GB allocation is OOM-killed (exit 137), infinite loop killed at timeout, root FS read-only, fork bomb stopped at 63 processes, uid 1000 with no effective capabilities | Kept as regression tests in `tests/test_run_python.py` |

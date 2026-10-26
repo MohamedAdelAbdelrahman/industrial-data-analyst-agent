@@ -4,6 +4,7 @@ Usage:
     python scripts/try_mcp_tools.py                            # demo questions for every tool
     python scripts/try_mcp_tools.py sql "your database question"
     python scripts/try_mcp_tools.py manuals "your manual question" [machine_type]
+    python scripts/try_mcp_tools.py chain                      # SQL -> dataset -> run_python plot
 """
 import asyncio
 import json
@@ -17,7 +18,21 @@ DEMO = [
     ("sql", ["What was the total corrective maintenance cost per plant?"]),
     ("manuals", ["compressor discharge temperature too high", "Compressor"]),
     ("manuals", ["how often to change the conveyor gearbox oil"]),
+    ("chain", []),
 ]
+
+CHAIN_QUESTION = "Daily average discharge temperature of Compressor-03 (date, avg_temp), ordered by date"
+CHAIN_CODE = """
+import pandas as pd, matplotlib.pyplot as plt
+df = pd.read_csv("/data/{ds}.csv")
+df.columns = ["date", "avg_temp"]
+print(df.describe().round(2))
+ax = df.plot(x="date", y="avg_temp", figsize=(8, 3), legend=False, title="Compressor-03 discharge temperature")
+ax.axhline(105, color="orange", ls="--", label="HIGH 105 degC")
+ax.set_ylabel("degC")
+plt.tight_layout()
+plt.savefig("compressor03_temp.png")
+"""
 
 
 def payload(result) -> dict:
@@ -36,6 +51,18 @@ async def call(session, kind, args):
         for row in out["rows"]:
             print(row)
         print(f"({out['row_count']} rows, dataset_id={out['dataset_id']})")
+    elif kind == "chain":
+        out = payload(await session.call_tool("query_database", {"question": CHAIN_QUESTION, "max_rows": 3}))
+        print(f"\n[query_database] {CHAIN_QUESTION}\nSQL: {out['sql']}\n"
+              f"-> {out['row_count']} rows, dataset_id={out['dataset_id']}, error={out['error']}")
+        if out["error"] or not out["dataset_id"]:
+            return
+        res = payload(await session.call_tool("run_python", {
+            "code": CHAIN_CODE.format(ds=out["dataset_id"]), "dataset_ids": [out["dataset_id"]]}))
+        print(f"[run_python] exit={res.get('exit_code')} error={res.get('error')}")
+        print(res.get("stdout", "") + res.get("stderr", ""))
+        for img in res.get("images", []):
+            print("image:", img["path"])
     else:
         params = {"query": args[0], "k": 3} | ({"machine_type": args[1]} if len(args) > 1 else {})
         out = payload(await session.call_tool("search_manuals", params))
@@ -59,6 +86,8 @@ async def main(jobs):
 if __name__ == "__main__":
     if len(sys.argv) >= 3 and sys.argv[1] in ("sql", "manuals"):
         jobs = [(sys.argv[1], sys.argv[2:])]
+    elif sys.argv[1:] == ["chain"]:
+        jobs = [("chain", [])]
     else:
         jobs = DEMO
     asyncio.run(main(jobs))

@@ -31,9 +31,11 @@ pytest
 ```bash
 python data/generate_db.py --out data/sensors.db            # build the DB once
 python -m ida.mcp_server.manuals_index                       # build the manual search index once
+python -m ida.mcp_server.sandbox --build                     # build the run_python Docker image once
 python scripts/try_mcp_tools.py                              # start MCP server, call both tools
 python scripts/try_mcp_tools.py sql "Average spindle temperature per CNC mill last week"
 python scripts/try_mcp_tools.py manuals "pump cavitation noise" Pump
+python scripts/try_mcp_tools.py chain                        # SQL -> dataset -> sandboxed plot
 python eval/eval_retrieval.py                                # retrieval recall@k / MRR
 pytest            # unit tests (no API calls)
 pytest --live     # also runs tests that call the LLM

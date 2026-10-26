@@ -44,3 +44,34 @@ class QueryDatabaseTool:
         if res.truncated:
             out["note"] = f"Result capped at {self.settings.max_cached_rows} rows; aggregate in SQL instead."
         return out
+
+
+class RunPythonTool:
+    MAX_CODE_CHARS = 20_000
+
+    def __init__(self, sandbox, store: DatasetStore):
+        self.sandbox = sandbox
+        self.store = store
+
+    def __call__(self, code: str, dataset_ids: list[str] | None = None, timeout_s: int = 20) -> dict:
+        dataset_ids = dataset_ids or []
+        if len(code) > self.MAX_CODE_CHARS:
+            return {"error": f"Code too long ({len(code)} chars, max {self.MAX_CODE_CHARS})."}
+        try:
+            missing = [d for d in dataset_ids if not self.store.exists(d)]
+        except ValueError as e:
+            return {"error": str(e)}
+        if missing:
+            return {"error": f"Unknown dataset_id(s): {missing}. Use dataset_id values returned by query_database."}
+
+        result = self.sandbox.run(code, {d: self.store.path(d) for d in dataset_ids},
+                                  timeout_s=max(1, min(timeout_s, 60)))
+        if result["timed_out"]:
+            result["error"] = f"Timed out after {timeout_s}s and was killed."
+        elif result["oom_killed"]:
+            result["error"] = "Killed: exceeded the 512 MB memory limit."
+        elif result["exit_code"] != 0:
+            result["error"] = f"Exited with code {result['exit_code']}; see stderr."
+        else:
+            result["error"] = None
+        return result

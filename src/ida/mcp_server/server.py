@@ -14,7 +14,7 @@ from ida.config import get_settings
 from ida.mcp_server.datasets import DatasetStore
 from ida.mcp_server.manuals_index import ManualIndex
 from ida.mcp_server.sql_generator import load_schema, make_generator
-from ida.mcp_server.tools import QueryDatabaseTool
+from ida.mcp_server.tools import QueryDatabaseTool, RunPythonTool
 
 mcp = FastMCP("industrial-tools", port=8765, log_level="WARNING")
 
@@ -29,6 +29,13 @@ def _query_tool() -> QueryDatabaseTool:
 def _manual_index() -> ManualIndex:
     s = get_settings()
     return ManualIndex(s.index_dir, s.manuals_dir)
+
+
+@lru_cache
+def _python_tool() -> RunPythonTool:
+    from ida.mcp_server.sandbox import PythonSandbox
+    s = get_settings()
+    return RunPythonTool(PythonSandbox(s.artifacts_dir), DatasetStore(s.dataset_dir))
 
 
 @mcp.resource("schema://sensors", mime_type="text/plain")
@@ -65,6 +72,21 @@ def search_manuals(query: str, machine_type: str | None = None, k: int = 5) -> d
     except ValueError as e:
         return {"hits": [], "error": str(e)}
     return {"hits": hits, "error": None}
+
+
+@mcp.tool()
+def run_python(code: str, dataset_ids: list[str] | None = None, timeout_s: int = 20) -> dict:
+    """Run Python 3.12 analysis code in an isolated sandbox (pandas, numpy, scipy, matplotlib).
+
+    No network, no package installs, 512 MB RAM, timeout_s max 60. Datasets from query_database
+    are available read-only as /data/<dataset_id>.csv when listed in dataset_ids, e.g.
+    pd.read_csv("/data/ds_0c9bf8e5e5.csv"). Print the results you need. Save charts with
+    plt.savefig("name.png") (working dir); their file paths are returned in 'images'.
+    """
+    try:
+        return _python_tool()(code, dataset_ids, timeout_s)
+    except Exception as e:  # noqa: BLE001 -- tool boundary: Docker not running, image missing
+        return {"error": f"Sandbox unavailable ({type(e).__name__}): {str(e)[:300]}"}
 
 
 def main():

@@ -24,7 +24,7 @@ Every step ends with a commit and push. Tick the box when its "done when" check 
   Done when: 10 hand-written queries return the right manual page in the top 3 (recall@3 ≥ 0.8).
   Result: 17 queries (`eval/eval_retrieval.py`): recall@1 0.88, recall@3 0.94, MRR 0.91. See the decision log in docs/design.md.
 
-- [ ] **Step 5: `run_python` sandbox** (3 h)
+- [x] **Step 5: `run_python` sandbox** (3 h)
   `sandbox/Dockerfile` and a runner with the limits from the design doc. Datasets are mounted and PNGs are collected.
   Done when: tests show that network access fails, `while True` is killed at the timeout, writing outside /tmp and /out fails, and a matplotlib plot comes back.
 
