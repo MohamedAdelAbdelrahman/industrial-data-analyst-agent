@@ -33,6 +33,13 @@ Every step ends with a commit and push. Tick the box when its "done when" check 
   State, planner, executor, step_check, replanner, answerer, connected to MCP through `langchain-mcp-adapters`, with budgets.
   Done when: 5 sample questions (one per category) are answered end-to-end from the CLI.
 
+- [ ] **Step 6b: Fine-tune the Text-to-SQL model** (6 h, split across a and b below)
+  Until this step, `query_database` uses Claude to write SQL (`SQL_BACKEND=llm`).
+  - **a. Training data** (2 h, local): Claude writes about 1,500 question→SQL pairs for `schema.sql` covering joins, aggregates, time windows and the NULL/active-alarm traps. **Every SQL is executed** on `sensors.db` and only pairs that run and return rows are kept. A held-out test split of about 150 pairs is never trained on. Output: `finetune/data/{train,test}.jsonl`.
+  - **b. Training** (3 h, Google Colab free T4 GPU): QLoRA with Unsloth on `Qwen2.5-Coder-1.5B-Instruct` from Hugging Face. Notebook: `finetune/train_colab.ipynb`. Export a GGUF (q4_k_m) and download it.
+  - **c. Serving** (1 h, local): `ollama create ida-sql -f finetune/Modelfile`, then set `SQL_BACKEND=finetuned`.
+  Done when: execution accuracy on the test split is reported for base Qwen, fine-tuned Qwen and Claude.
+
 - [ ] **Step 7: Langfuse tracing** (1 h)
   Self-host with docker compose or use the cloud free tier. Add the callback handler and task tags.
   Done when: a run shows one trace per question with node and tool spans plus cost.
@@ -46,10 +53,10 @@ Every step ends with a commit and push. Tick the box when its "done when" check 
   Done when: the demo questions run from the UI.
 
 - [ ] **Step 10: Evaluation set and harness** (4 h)
-  30–40 tasks in `eval/tasks.yaml` plus `eval/run_eval.py` → `eval/results/<date>.json` and a markdown table. Run 2 configs, for example fine-tuned SQL vs LLM SQL, or a big vs small planner.
+  30–40 tasks in `eval/tasks.yaml` plus `eval/run_eval.py` → `eval/results/<date>.json` and a markdown table. Run 2 configs: `SQL_BACKEND=llm` vs `SQL_BACKEND=finetuned`.
   Done when: the results table is in the README.
 
 - [ ] **Step 11: Polish** (2 h)
   README with an architecture diagram, demo GIF, results, design decisions and limitations. Add a CV bullet with real numbers.
 
-**Total ≈ 31 h.** If time runs short, cut these first: the second eval config, then output_guard's number check.
+**Total ≈ 37 h** (about 7 h over budget because of 6b). If time runs short, cut these first: output_guard's number check, then shrink the eval set to 30 tasks, then reduce the fine-tuning data to 800 pairs.
