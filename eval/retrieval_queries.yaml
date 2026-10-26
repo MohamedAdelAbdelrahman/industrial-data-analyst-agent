@@ -1,0 +1,53 @@
+# search_manuals retrieval check. A hit = a result whose machine_type matches (null = any)
+# and whose section starts with one of `sections`.
+- query: Compressor discharge is running hot, what could cause it?
+  machine_type: Compressor
+  sections: ["4.1"]
+- query: pump makes a gravel-like noise and vibrates a lot
+  machine_type: Pump
+  sections: ["4.3"]
+- query: What is the critical vibration limit for the CNC spindle?
+  machine_type: CNC Mill
+  sections: ["2.", "4.2"]
+- query: Which part number is the thermostatic valve kit?
+  machine_type: Compressor
+  sections: ["4.1"]
+- query: How often should the conveyor gearbox oil be changed?
+  machine_type: Conveyor
+  sections: ["4.2", "5."]
+- query: hydraulic oil temperature too high, what should I do
+  machine_type: Hydraulic Press
+  sections: ["4.2"]
+- query: robot joint motor is overheating
+  machine_type: Robot Arm
+  sections: ["4.1"]
+- query: tightening torque for the robot base anchor bolts
+  machine_type: Robot Arm
+  sections: ["4.3", "5."]
+- query: What must the operator do when a critical alarm is raised?
+  machine_type: null
+  sections: ["3."]
+- query: sensor shows a communication fault and readings are invalid
+  machine_type: null
+  sections: ["3."]
+- query: spindle speed above the rated maximum
+  machine_type: CNC Mill
+  sections: ["4.3"]
+- query: pump flow much higher than normal, possible leak
+  machine_type: Pump
+  sections: ["4.2"]
+- query: accumulator nitrogen pre-charge pressure
+  machine_type: Hydraulic Press
+  sections: ["4.3", "5."]
+- query: conveyor drive motor drawing too much current
+  machine_type: Conveyor
+  sections: ["4.1"]
+- query: minimum drawbar clamping force
+  machine_type: CNC Mill
+  sections: ["4.2"]
+- query: SP-PMP-SEAL-80
+  machine_type: Pump
+  sections: ["5."]
+- query: at what pressure does the compressor safety valve open
+  machine_type: Compressor
+  sections: ["4.2", "5."]

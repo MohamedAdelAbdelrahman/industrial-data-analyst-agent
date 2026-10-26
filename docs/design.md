@@ -123,3 +123,15 @@ Langfuse `CallbackHandler` on the graph gives one trace per task with nested spa
 30–40 tasks in `eval/tasks.yaml`, in categories `sql_only`, `manual_only`, `sql+python`, `sql+manual`, `multi_hop`, `should_refuse`.
 Each task has a checker: an exact/numeric-tolerance answer, a reference SQL whose result must match, required manual pages, or "must refuse".
 Metrics per run: success rate (overall and per category), avg steps / tool calls, avg cost, avg latency, and Text-to-SQL execution accuracy inside the agent.
+
+## 6. Decision log (findings while building)
+
+| Step | Finding | Decision |
+|---|---|---|
+| 2 | PyMuPDF text has `ﬁ` ligatures and part numbers broken across lines (`SP-CNC-` / `BRG-7014`) | NFKC normalisation and re-joining hyphenated line breaks in `ida.manuals.normalize` |
+| 4 | Numbered steps ("1. Clean the cooler…") match a regex for headings ("1. Safety") | Detect headings by font (bold, ≥ 10.5 pt) instead of text pattern |
+| 4 | `table.extract()` drops spaces inside cells (`> 105` → `>105`) | Read each cell's area with `get_text(clip=…)`, one row per line as `Header: value \| …` |
+| 4 | Safety and alarm-response sections are identical across all 6 manuals and crowd the top-k | Over-fetch and fold identical texts into one hit (`also_in` lists the other manuals) |
+| 4 | Retrieval on 17 queries: recall@1 0.88, recall@3 0.94, MRR 0.91. The one miss is a vocabulary gap ("what must the operator do" vs "reduce load or stop…") | Tried cross-encoder reranking (bge-reranker-base, ms-marco-MiniLM-L-6): recall@1 0.88 → 0.94, but the miss stays at rank 7 and it costs 0.5–5 s/query on CPU. **Not adopted** at this corpus size |
+| 4 | MCP stdio server on Windows deadlocked when torch/scipy were first imported inside a tool call (worker thread) | Load the embedding model and index at server start on the main thread (`ManualIndex.warm_up`), and load it with `local_files_only` to skip the Hub check (~20 s) |
+| 4 | Gemini client retries 6× with backoff by default, so a rate limit looks like a multi-minute hang | `timeout=60, max_retries=2`; generator failures are returned as a tool `error` |

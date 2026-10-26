@@ -136,3 +136,15 @@ def test_live_llm_generator(small_db, tmp_path):
     out = tool("How many machines are there of each machine type?")
     assert out["error"] is None, out
     assert sum(r[-1] for r in out["rows"]) == 27
+
+
+def test_tool_reports_generator_failure(small_db, tmp_path):
+    class Broken:
+        name = "broken"
+
+        def generate(self, question):
+            raise RuntimeError("429 RESOURCE_EXHAUSTED")
+
+    settings = dataclasses.replace(get_settings(), db_path=small_db, dataset_dir=tmp_path)
+    out = QueryDatabaseTool(settings, Broken(), DatasetStore(tmp_path))("anything")
+    assert out["error"].startswith("SQL generator unavailable") and "429" in out["error"]

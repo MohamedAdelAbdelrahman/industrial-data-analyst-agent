@@ -19,9 +19,10 @@ Every step ends with a commit and push. Tick the box when its "done when" check 
   `src/ida/mcp_server/`: FastMCP app, `SQLGenerator` interface (fine-tuned model plus LLM fallback), sqlglot validator, read-only executor, dataset cache.
   Done when: unit tests cover the validator (rejects DELETE/PRAGMA/ATTACH/multi-statement), the read-only connection, the timeout and truncation. `scripts/try_query_database.py` calls the tool over MCP stdio (also works in `mcp dev`).
 
-- [ ] **Step 4: `search_manuals`** (3 h)
+- [x] **Step 4: `search_manuals`** (3 h)
   Ingestion script (PyMuPDF → chunks → bge-small → Chroma) plus the tool with a machine_type filter.
   Done when: 10 hand-written queries return the right manual page in the top 3 (recall@3 ≥ 0.8).
+  Result: 17 queries (`eval/eval_retrieval.py`): recall@1 0.88, recall@3 0.94, MRR 0.91. See the decision log in docs/design.md.
 
 - [ ] **Step 5: `run_python` sandbox** (3 h)
   `sandbox/Dockerfile` and a runner with the limits from the design doc. Datasets are mounted and PNGs are collected.

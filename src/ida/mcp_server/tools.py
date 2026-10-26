@@ -20,6 +20,10 @@ class QueryDatabaseTool:
                "truncated": False, "dataset_id": None, "sql_backend": self.generator.name, "error": None}
         try:
             out["sql"] = self.generator.generate(question)
+        except Exception as e:  # noqa: BLE001 -- tool boundary: API down, rate limit, Ollama not running
+            out["error"] = f"SQL generator unavailable ({type(e).__name__}): {str(e)[:300]}"
+            return out
+        try:
             sql = validate_sql(out["sql"])
             res = run_query(self.settings.db_path, sql, self.settings.max_cached_rows,
                             self.settings.query_timeout_s)

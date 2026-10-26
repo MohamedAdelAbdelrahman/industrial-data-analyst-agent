@@ -27,6 +27,8 @@ class Settings:
     db_path: Path = field(default_factory=lambda: Path(_env("DB_PATH", str(ROOT / "data" / "sensors.db"))))
     schema_path: Path = ROOT / "data" / "schema.sql"
     dataset_dir: Path = field(default_factory=lambda: Path(_env("DATASET_DIR", str(ROOT / "data" / "cache" / "datasets"))))
+    manuals_dir: Path = ROOT / "data" / "manuals"
+    index_dir: Path = field(default_factory=lambda: Path(_env("INDEX_DIR", str(ROOT / "data" / "index"))))
 
     query_timeout_s: float = 10.0
     max_cached_rows: int = 10_000     # rows written to the dataset CSV for run_python
