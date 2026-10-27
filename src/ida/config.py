@@ -16,14 +16,25 @@ def _env(name: str, default: str) -> str:
     return os.environ.get(name) or default
 
 
+def _models(name: str, default: str) -> tuple[str, ...]:
+    """Comma-separated model pool, tried in order (see ida.model_pool)."""
+    return tuple(m.strip() for m in _env(name, default).split(",") if m.strip())
+
+
 @dataclass(frozen=True)
 class Settings:
     llm_provider: str = field(default_factory=lambda: _env("LLM_PROVIDER", "google"))
-    planner_model: str = field(default_factory=lambda: _env("PLANNER_MODEL", "gemini-3.5-flash"))
-    executor_model: str = field(default_factory=lambda: _env("EXECUTOR_MODEL", "gemini-3.1-flash-lite"))
+    # Pools: the first model that is not out of quota answers. Planner/answerer want the strongest
+    # models; the executor and SQL writer are called most, so they start with the cheap ones.
+    planner_models: tuple[str, ...] = field(default_factory=lambda: _models(
+        "PLANNER_MODELS", "gemini-3.5-flash,gemini-3-flash-preview,gemini-3.5-flash-lite,gemini-3.1-flash-lite"))
+    executor_models: tuple[str, ...] = field(default_factory=lambda: _models(
+        "EXECUTOR_MODELS", "gemini-3.1-flash-lite,gemini-3.5-flash-lite,gemini-3-flash-preview,gemma-4-26b-a4b-it"))
+    quota_path: Path = field(default_factory=lambda: Path(_env("QUOTA_PATH", str(ROOT / "data" / "cache" / "quota.json"))))
 
     sql_backend: str = field(default_factory=lambda: _env("SQL_BACKEND", "llm"))
-    sql_llm_model: str = field(default_factory=lambda: _env("SQL_LLM_MODEL", "gemini-3.1-flash-lite"))
+    sql_llm_models: tuple[str, ...] = field(default_factory=lambda: _models(
+        "SQL_LLM_MODELS", "gemini-3.1-flash-lite,gemini-3.5-flash-lite,gemma-4-31b-it"))
     finetuned_sql_model: str = field(default_factory=lambda: _env("FINETUNED_SQL_MODEL", "ida-sql"))
     ollama_url: str = field(default_factory=lambda: _env("OLLAMA_URL", "http://localhost:11434"))
 

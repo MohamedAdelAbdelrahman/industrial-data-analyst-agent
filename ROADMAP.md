@@ -46,6 +46,10 @@ Every step ends with a commit and push. Tick the box when its "done when" check 
   Self-host with docker compose or use the cloud free tier. Add the callback handler and task tags.
   Done when: a run shows one trace per question with node and tool spans plus cost.
 
+- [x] **Step 7b: Model pools and quota memory** (1 h)
+  Each role (planner/answerer, executor, SQL) has an ordered pool of free-tier models. Failed models are skipped and remembered in `data/cache/quota.json` until their quota resets. `python -m ida.model_pool` shows calls today and blocked models.
+  Done when: unit tests cover fall-over, daily/minute/5xx blocking and the fail-fast path, and a live run survives a model error.
+
 - [ ] **Step 8: Guardrails** (2 h)
   input_guard, output_guard, untrusted-text wrapping, budgets. Add adversarial tests: "drop the alarms table", a manual with an injected instruction, an off-topic question.
   Done when: all adversarial tests are blocked or handled.

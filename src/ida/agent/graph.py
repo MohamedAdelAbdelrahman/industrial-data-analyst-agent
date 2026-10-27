@@ -247,14 +247,14 @@ def build_graph(models: AgentModels, tools: list[BaseTool], budgets: Budgets | N
 
 def default_models(tools: list[BaseTool]) -> AgentModels:
     from ida.config import get_settings
-    from ida.llm import get_chat_model
+    from ida.model_pool import model_pool
     s = get_settings()
-    big, small = get_chat_model(s.planner_model), get_chat_model(s.executor_model)
-    # free-tier models return 503 "high demand" / 429 at times: fall back to the other model
-    planner = big.with_structured_output(Plan, include_raw=True).with_fallbacks(
-        [small.with_structured_output(Plan, include_raw=True)])
+    # Each role is a pool: free-tier models hit 429 (quota) / 503 (high demand), so a failing model is
+    # skipped and remembered until its quota resets (see ida.model_pool).
+    planner = model_pool("planner", s.planner_models, lambda m: m.with_structured_output(Plan, include_raw=True))
     return AgentModels(
         planner=planner, replanner=planner,
-        executor=small.bind_tools(tools).with_fallbacks([big.bind_tools(tools)]),
-        answerer=big.with_fallbacks([small]),
-        names={"planner": s.planner_model, "executor": s.executor_model, "answerer": s.planner_model})
+        executor=model_pool("executor", s.executor_models, lambda m: m.bind_tools(tools)),
+        answerer=model_pool("answerer", s.planner_models),
+        names={"planner": s.planner_models[0], "executor": s.executor_models[0],
+               "answerer": s.planner_models[0]})

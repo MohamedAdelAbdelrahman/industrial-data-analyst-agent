@@ -49,13 +49,15 @@ def load_schema(path: str) -> str:
 
 class LLMSQLGenerator:
     def __init__(self, settings: Settings):
-        from ida.llm import get_chat_model
-        self.name = f"llm:{settings.sql_llm_model}"
+        from ida.model_pool import model_pool
+        self.name = f"llm:{settings.sql_llm_models[0]}"
         self.schema = load_schema(str(settings.schema_path))
-        self.model = get_chat_model(settings.sql_llm_model)
+        self.model = model_pool("sql", settings.sql_llm_models)
 
     def generate(self, question: str) -> str:
-        return extract_sql(self.model.invoke(build_prompt(self.schema, question)).text)
+        msg = self.model.invoke(build_prompt(self.schema, question))
+        self.name = f"llm:{msg.response_metadata.get('model_name', self.name.split(':', 1)[1])}"   # who answered
+        return extract_sql(msg.text)
 
 
 class OllamaSQLGenerator:

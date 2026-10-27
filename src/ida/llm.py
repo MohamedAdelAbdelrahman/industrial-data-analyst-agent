@@ -3,9 +3,9 @@ from langchain_core.language_models import BaseChatModel
 
 from ida.config import get_settings
 
-# Fail fast instead of silently retrying for minutes (free-tier rate limits return 429s).
-TIMEOUT_S = 60
-MAX_RETRIES = 2
+# Fail fast: a model pool (ida.model_pool) moves to the next model instead of retrying this one.
+TIMEOUT_S = 90
+MAX_RETRIES = 0
 
 
 def get_chat_model(model: str, temperature: float = 0.0) -> BaseChatModel:
