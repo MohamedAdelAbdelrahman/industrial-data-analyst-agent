@@ -8,11 +8,13 @@ it instead of wasting a request:
     429 per-day quota      -> blocked until the daily reset (midnight Pacific time)
     429 per-minute quota   -> blocked for the retry delay the API suggests (at least 60 s)
     404 model not found    -> blocked for a day
-    5xx / timeout          -> blocked for 2 minutes
+    5xx / timeout          -> blocked for 2 minutes, doubled for each failure in a row (max 4 hours)
     anything else          -> not remembered, but the next model is still tried
 
 Memory is keyed by model name, not role, because the quota belongs to the model: if the planner
-exhausts gemini-3.5-flash, the answerer skips it too. The MCP server (SQL) and the agent are separate
+exhausts gemini-3.5-flash, the answerer skips it too. The backoff matters because a timeout costs
+90 s: a model that is down for hours (gemini-3.8-flash on 2026-10-27) would otherwise cost 90 s every
+2 minutes. One successful call clears the failure count. The MCP server (SQL) and the agent are separate
 processes sharing the file; a lost write in a race only costs one wasted request.
 
     python -m ida.model_pool            # show today's calls and blocked models
@@ -39,6 +41,8 @@ log = logging.getLogger(__name__)
 
 RESET_TZ = ZoneInfo("America/Los_Angeles")     # Gemini daily quotas reset at midnight Pacific
 SERVER_ERROR_COOLDOWN = timedelta(minutes=2)
+SERVER_ERROR_MAX_COOLDOWN = timedelta(hours=4)
+SERVER_ERROR = "server error / timeout"
 MIN_RATE_LIMIT_COOLDOWN = timedelta(seconds=60)
 
 
@@ -52,7 +56,12 @@ def next_daily_reset(now: datetime) -> datetime:
     return midnight.astimezone(UTC)
 
 
-def classify(exc: Exception, now: datetime) -> tuple[datetime, str] | None:
+def server_error_cooldown(strikes: int) -> timedelta:
+    """2 min, 4, 8, ... capped at 4 h; `strikes` = server errors in a row before this one."""
+    return min(SERVER_ERROR_COOLDOWN * 2 ** min(strikes, 20), SERVER_ERROR_MAX_COOLDOWN)
+
+
+def classify(exc: Exception, now: datetime, strikes: int = 0) -> tuple[datetime, str] | None:
     """(blocked_until, reason) for errors worth remembering, else None."""
     msg = str(exc)
     if isinstance(exc, ModelRateLimitError) or "429" in msg or "RESOURCE_EXHAUSTED" in msg:
@@ -65,12 +74,13 @@ def classify(exc: Exception, now: datetime) -> tuple[datetime, str] | None:
         return now + timedelta(days=1), "model not found"
     if isinstance(exc, (ModelAPIError, ModelTimeoutError, ModelConnectionError, TimeoutError)) \
             or re.search(r"\b(500|503|504)\b|UNAVAILABLE|DEADLINE_EXCEEDED", msg):
-        return now + SERVER_ERROR_COOLDOWN, "server error / timeout"
+        return now + server_error_cooldown(strikes), SERVER_ERROR
     return None
 
 
 class QuotaMemory:
-    """{model: {"blocked_until": iso, "reason": str, "day": "YYYY-MM-DD", "calls": n}} in a JSON file."""
+    """{model: {"blocked_until": iso, "reason": str, "strikes": n, "day": "YYYY-MM-DD", "calls": n}}
+    in a JSON file. `strikes` counts server errors in a row (for the backoff)."""
 
     def __init__(self, path: Path):
         self.path = Path(path)
@@ -92,9 +102,15 @@ class QuotaMemory:
             return datetime.fromisoformat(until)
         return None
 
+    def strikes(self, model: str) -> int:
+        return self._load().get(model, {}).get("strikes", 0)
+
     def block(self, model: str, until: datetime, reason: str) -> None:
         data = self._load()
-        data.setdefault(model, {}).update(blocked_until=until.isoformat(), reason=reason)
+        entry = data.setdefault(model, {})
+        entry.update(blocked_until=until.isoformat(), reason=reason)
+        if reason == SERVER_ERROR:
+            entry["strikes"] = entry.get("strikes", 0) + 1
         self._save(data)
 
     def record_call(self, model: str, now: datetime | None = None) -> None:
@@ -105,6 +121,7 @@ class QuotaMemory:
         entry["day"] = day
         entry.pop("blocked_until", None)
         entry.pop("reason", None)
+        entry.pop("strikes", None)
         self._save(data)
 
     def status(self) -> dict[str, dict]:
@@ -139,11 +156,12 @@ class ModelPool(Runnable):
         return avail
 
     def _failed(self, name: str, exc: Exception) -> None:
-        verdict = classify(exc, _now())
+        now = _now()
+        verdict = classify(exc, now, self.memory.strikes(name))
         if verdict:
             self.memory.block(name, *verdict)
-        log.warning("[%s] %s failed (%s): %s", self.role, name,
-                    verdict[1] if verdict else type(exc).__name__, str(exc)[:200])
+        why = f"{verdict[1]}, blocked {verdict[0] - now}" if verdict else type(exc).__name__
+        log.warning("[%s] %s failed (%s): %s", self.role, name, why, str(exc)[:200])
 
     def invoke(self, input: Any, config: RunnableConfig | None = None, **kwargs: Any) -> Any:
         last: Exception | None = None
@@ -199,5 +217,6 @@ if __name__ == "__main__":
     for model, e in sorted(status.items()):
         calls = e.get("calls", 0) if e.get("day") == today else 0
         until = mem.blocked_until(model)
-        state = f"BLOCKED until {until.astimezone():%m-%d %H:%M} ({e.get('reason')})" if until else "ok"
+        strikes = f", {e['strikes']} in a row" if e.get("strikes") else ""
+        state = f"BLOCKED until {until.astimezone():%m-%d %H:%M} ({e.get('reason')}{strikes})" if until else "ok"
         print(f"{model:28} {calls:3} calls today   {state}")

@@ -6,7 +6,14 @@ import pytest
 from langchain_core.exceptions import ModelAPIError, ModelRateLimitError
 from langchain_core.runnables import RunnableLambda
 
-from ida.model_pool import AllModelsUnavailable, ModelPool, QuotaMemory, classify, next_daily_reset
+from ida.model_pool import (
+    AllModelsUnavailable,
+    ModelPool,
+    QuotaMemory,
+    classify,
+    next_daily_reset,
+    server_error_cooldown,
+)
 
 NOW = datetime(2026, 10, 27, 12, 0, tzinfo=UTC)       # 05:00 in California (PDT)
 DAILY_429 = ("429 RESOURCE_EXHAUSTED. Quota exceeded for metric generate_content_free_tier_requests, "
@@ -93,3 +100,26 @@ def test_async(memory):
     pool = ModelPool("x", [("a", fails(ModelAPIError("504 DEADLINE_EXCEEDED"))), ("b", ok("b"))], memory)
     assert asyncio.run(pool.ainvoke("q")) == "b"
     assert memory.status()["a"]["reason"] == "server error / timeout"
+
+
+def test_server_errors_back_off_exponentially_until_a_success(memory):
+    assert [server_error_cooldown(n) for n in range(4)] == [timedelta(minutes=m) for m in (2, 4, 8, 16)]
+    assert server_error_cooldown(50) == timedelta(hours=4)
+
+    pool = ModelPool("x", [("a", fails(ModelAPIError("504 DEADLINE_EXCEEDED"))), ("b", ok("b"))], memory)
+    for expected in (2, 4, 8):
+        memory.block("a", datetime.now(UTC) - timedelta(seconds=1), "rate limited")   # let "a" be tried again
+        start = datetime.now(UTC)
+        pool.invoke("q")
+        blocked = memory.blocked_until("a") - start
+        assert timedelta(minutes=expected) <= blocked < timedelta(minutes=expected, seconds=5)
+    assert memory.strikes("a") == 3
+
+    memory.block("a", datetime.now(UTC) - timedelta(seconds=1), "rate limited")
+    assert ModelPool("x", [("a", ok("a"))], memory).invoke("q") == "a"
+    assert memory.strikes("a") == 0                                                   # success clears it
+
+
+def test_rate_limits_do_not_add_strikes(memory):
+    ModelPool("x", [("a", fails(ModelRateLimitError(MINUTE_429))), ("b", ok("b"))], memory).invoke("q")
+    assert memory.strikes("a") == 0
