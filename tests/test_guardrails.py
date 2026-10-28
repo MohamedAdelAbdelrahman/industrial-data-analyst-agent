@@ -163,3 +163,13 @@ def test_cli_streaming_handles_a_node_without_changes(capsys):
     graph, _ = graph_with([db], Scripted(plan(("count", "query_database"))), executor, answer="47 (SQL)")
     out = asyncio.run(ask(graph, "Which pump had the most alarms?"))
     assert out["status"] == "answered" and out["final_answer"] == "47 (SQL)"
+
+
+def test_plant_facts_from_the_prompt_count_as_evidence():
+    """First live plot run: "the 60-day period" was flagged, but 60 comes from the domain prompt."""
+    db = FakeTool("query_database", {"sql": "SELECT ...", "rows": [["Compressor-03", 93.01]], "row_count": 1,
+                                     "dataset_id": "ds_1", "error": None})
+    executor = Scripted(call("query_database", question="q"), AIMessage(content="93.01"))
+    graph, _ = graph_with([db], Scripted(plan(("max", "query_database"))), executor,
+                          answer="Max 93.01 degC over the 60-day period across all 27 machines (SQL).")
+    assert run(graph)["guard_flags"] == []

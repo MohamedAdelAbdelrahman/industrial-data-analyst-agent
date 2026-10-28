@@ -27,7 +27,6 @@ from langgraph.graph import END, START, StateGraph
 from ida.agent import prompts
 from ida.agent.guards import injection_flags, input_guard, output_guard, wrap_untrusted
 from ida.agent.state import AgentState, Plan, StepRecord, ToolEvent
-from ida.config import DATA_END
 
 MAX_TOOL_CONTENT = 6_000      # chars of a tool result passed back to the executor
 
@@ -253,8 +252,8 @@ def build_graph(models: AgentModels, tools: list[BaseTool], budgets: Budgets | N
                 "usage": _add_usage(state.get("usage", {}), models.names.get("answerer", "answerer"), ai)}
 
     def check_answer(state: AgentState) -> dict:
-        # numbers may come from tool results, the question, or the data end date used as "now"
-        evidence = " ".join([state["question"], DATA_END,
+        # numbers may come from tool results, the question, or the plant facts in the prompts (60 days, ...)
+        evidence = " ".join([state["question"], prompts.DOMAIN,
                              *(json.dumps(e["output"], default=str) for e in state.get("tool_log", []))])
         res = output_guard(state["final_answer"], evidence)
         if not res.flags:
