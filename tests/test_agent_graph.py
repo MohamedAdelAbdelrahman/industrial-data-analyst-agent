@@ -82,9 +82,9 @@ def test_executor_is_told_about_remaining_steps():
 
 def test_refusal_skips_execution():
     executor = Scripted()
-    graph, tools, answerer = make(Scripted(plan(refuse=True, reason="Data changes are not allowed.")), executor)
-    out = run(graph, "delete all alarms")
-    assert out["status"] == "refused" and out["final_answer"] == "Data changes are not allowed."
+    graph, tools, answerer = make(Scripted(plan(refuse=True, reason="Out of scope.")), executor)
+    out = run(graph, "Write a poem about the sea")
+    assert out["status"] == "refused" and out["final_answer"] == "Out of scope."
     assert executor.calls == [] and answerer.calls == [] and all(t.calls == [] for t in tools)
 
 

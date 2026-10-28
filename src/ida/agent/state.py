@@ -46,5 +46,6 @@ class AgentState(TypedDict, total=False):
     replans: int
     usage: dict[str, dict[str, int]]  # model -> {"input": n, "output": n}
     stop_reason: str | None           # set when a budget ends the run early
+    guard_flags: list[str]            # input/output guard findings, injection-like tool output
     status: Literal["answered", "partial", "refused", "error"]
     final_answer: str

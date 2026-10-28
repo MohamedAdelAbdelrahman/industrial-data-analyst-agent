@@ -50,9 +50,10 @@ Every step ends with a commit and push. Tick the box when its "done when" check 
   Each role (planner/answerer, executor, SQL) has an ordered pool of free-tier models. Failed models are skipped and remembered in `data/cache/quota.json` until their quota resets. `python -m ida.model_pool` shows calls today and blocked models.
   Done when: unit tests cover fall-over, daily/minute/5xx blocking and the fail-fast path, and a live run survives a model error.
 
-- [ ] **Step 8: Guardrails** (2 h)
+- [x] **Step 8: Guardrails** (2 h)
   input_guard, output_guard, untrusted-text wrapping, budgets. Add adversarial tests: "drop the alarms table", a manual with an injected instruction, an off-topic question.
   Done when: all adversarial tests are blocked or handled.
+  Result: `ida.agent.guards` plus `input_guard`/`output_guard` graph nodes and a 25-LLM-call budget; 29 tests in `tests/test_guardrails.py` (write requests and injections blocked before any LLM call, injected manual text wrapped and flagged, off-topic refused by the planner, made-up numbers flagged).
 
 - [ ] **Step 9: Streamlit UI** (3 h)
   Chat on the left. On the right, live steps: the plan, each tool call (SQL shown, manual hits, plots) and cost/steps counters, via `graph.stream()`. Add a link to the Langfuse trace.

@@ -1,12 +1,16 @@
 """Planner / executor graph.
 
-    planner ─┬─ refused ───────────────────────────────────────────► END
-             └─► executor ⇄ tools
-                    │ step finished
-                    ▼
-                 step_check ─┬─ next step ─► executor
-                             ├─ failed ────► replanner ─► executor | answerer
-                             └─ all done / budget hit ─► answerer ─► END
+    input_guard ─┬─ blocked ─────────────────────────────────────────────────► END
+                 └─► planner ─┬─ refused ────────────────────────────────────► END
+                              └─► executor ⇄ tools
+                                     │ step finished
+                                     ▼
+                                  step_check ─┬─ next step ─► executor
+                                              ├─ failed ────► replanner ─► executor | answerer
+                                              └─ all done / budget hit ─► answerer ─► output_guard ─► END
+
+Guards (ida.agent.guards): input_guard blocks before any LLM call, tool output reaches the LLMs wrapped
+as untrusted data, and output_guard flags answer numbers that no tool result contains.
 
 Models are injected (AgentModels) so the routing logic is unit-testable with fakes.
 """
@@ -21,7 +25,9 @@ from langchain_core.tools import BaseTool
 from langgraph.graph import END, START, StateGraph
 
 from ida.agent import prompts
+from ida.agent.guards import injection_flags, input_guard, output_guard, wrap_untrusted
 from ida.agent.state import AgentState, Plan, StepRecord, ToolEvent
+from ida.config import DATA_END
 
 MAX_TOOL_CONTENT = 6_000      # chars of a tool result passed back to the executor
 
@@ -31,6 +37,7 @@ class Budgets:
     max_tool_calls: int = 15
     max_step_tool_calls: int = 4
     max_replans: int = 2
+    max_llm_calls: int = 25    # free tier: about 20 requests/day per model, so a runaway loop is costly
 
 
 @dataclass
@@ -76,6 +83,10 @@ def _datasets(tool_log: list[ToolEvent]) -> str:
     return "\n".join(rows) or "(none yet)"
 
 
+def _llm_calls(state: AgentState) -> int:
+    return sum(u["calls"] for u in state.get("usage", {}).values())
+
+
 def _done_steps(plan: list[StepRecord]) -> str:
     return "\n".join(f"{s['id']}. [{s['status']}] {s['goal']} -> {s['result']}"
                      for s in plan if s["status"] != "pending") or "(none yet)"
@@ -91,7 +102,7 @@ def _plan_records(steps, start_id: int) -> list[StepRecord]:
 
 
 def _evidence(state: AgentState) -> str:
-    parts = ["## Plan and step results", _done_steps(state["plan"]), "", "## Tool evidence"]
+    parts = []
     for e in state.get("tool_log", []):
         o = e["output"]
         if e["name"] == "query_database":
@@ -106,7 +117,8 @@ def _evidence(state: AgentState) -> str:
             imgs = [i["name"] for i in o.get("images", [])]
             parts.append(f"- run_python (exit {o.get('exit_code')}, error {o.get('error')})\n"
                          f"  stdout: {str(o.get('stdout', ''))[:1500]}\n  charts: {imgs}")
-    return "\n".join(parts)
+    return ("## Plan and step results\n" + _done_steps(state["plan"]) + "\n\n## Tool evidence\n"
+            + wrap_untrusted("\n".join(parts) or "(none)", "tool results"))
 
 
 # ---------- graph ----------
@@ -114,6 +126,12 @@ def _evidence(state: AgentState) -> str:
 def build_graph(models: AgentModels, tools: list[BaseTool], budgets: Budgets | None = None):
     budgets = budgets or Budgets()
     tools_by_name = {t.name: t for t in tools}
+
+    def guard(state: AgentState) -> dict:
+        res = input_guard(state["question"])
+        if res.blocked:
+            return {"status": "refused", "final_answer": res.reason, "guard_flags": res.flags}
+        return {"guard_flags": []}
 
     async def planner(state: AgentState) -> dict:
         res = await models.planner.ainvoke([SystemMessage(prompts.PLANNER), HumanMessage(state["question"])])
@@ -143,7 +161,7 @@ def build_graph(models: AgentModels, tools: list[BaseTool], budgets: Budgets | N
     async def run_tools(state: AgentState) -> dict:
         ai: AIMessage = state["step_messages"][-1]
         step_id = state["plan"][state["current"]]["id"]
-        new_msgs, events = [], []
+        new_msgs, events, flags = [], [], []
         for call in ai.tool_calls:
             start = time.monotonic()
             tool = tools_by_name.get(call["name"])
@@ -157,18 +175,22 @@ def build_graph(models: AgentModels, tools: list[BaseTool], budgets: Budgets | N
                 content = json.dumps(output, default=str)
             if len(content) > MAX_TOOL_CONTENT:
                 content = content[:MAX_TOOL_CONTENT] + "... [truncated]"
-            new_msgs.append(ToolMessage(content=content, tool_call_id=call["id"], name=call["name"]))
+            flags += [f"step {step_id} {call['name']}: {f}" for f in injection_flags(content)]
+            new_msgs.append(ToolMessage(content=wrap_untrusted(content, call["name"]), tool_call_id=call["id"], name=call["name"]))
             events.append(ToolEvent(step_id=step_id, name=call["name"], args=call["args"], output=output,
                                     error=output.get("error"), duration_s=round(time.monotonic() - start, 2)))
         n = len(ai.tool_calls)
         return {"step_messages": [*state["step_messages"], *new_msgs],
                 "tool_log": [*state.get("tool_log", []), *events],
                 "tool_calls": state.get("tool_calls", 0) + n,
-                "step_tool_calls": state.get("step_tool_calls", 0) + n}
+                "step_tool_calls": state.get("step_tool_calls", 0) + n,
+                "guard_flags": [*state.get("guard_flags", []), *flags]}
 
     def after_executor(state: AgentState) -> str:
         ai = state["step_messages"][-1]
         if not getattr(ai, "tool_calls", None):
+            return "step_check"
+        if _llm_calls(state) >= budgets.max_llm_calls:
             return "step_check"
         if state.get("tool_calls", 0) + len(ai.tool_calls) > budgets.max_tool_calls:
             return "step_check"      # step_check records the budget stop
@@ -181,10 +203,13 @@ def build_graph(models: AgentModels, tools: list[BaseTool], budgets: Budgets | N
         plan = [dict(s) for s in state["plan"]]
         step = plan[state["current"]]
         stop_reason = state.get("stop_reason")
+        if _llm_calls(state) >= budgets.max_llm_calls:
+            stop_reason = stop_reason or f"LLM-call budget ({budgets.max_llm_calls}) exhausted"
         if getattr(ai, "tool_calls", None):          # executor wanted more tools but a budget said no
             if state.get("tool_calls", 0) + len(ai.tool_calls) > budgets.max_tool_calls:
                 stop_reason = f"tool-call budget ({budgets.max_tool_calls}) exhausted"
-            step.update(status="failed", result=f"FAILED: step tool budget ({budgets.max_step_tool_calls}) exhausted")
+            step.update(status="failed", result="FAILED: " + (
+                stop_reason or f"step tool budget ({budgets.max_step_tool_calls}) exhausted"))
         else:
             text = (ai.text if hasattr(ai, "text") else str(ai.content)).strip()
             failed = text.upper().startswith("FAILED")
@@ -227,21 +252,36 @@ def build_graph(models: AgentModels, tools: list[BaseTool], budgets: Budgets | N
                 "status": "partial" if state.get("stop_reason") or unrecovered else "answered",
                 "usage": _add_usage(state.get("usage", {}), models.names.get("answerer", "answerer"), ai)}
 
+    def check_answer(state: AgentState) -> dict:
+        # numbers may come from tool results, the question, or the data end date used as "now"
+        evidence = " ".join([state["question"], DATA_END,
+                             *(json.dumps(e["output"], default=str) for e in state.get("tool_log", []))])
+        res = output_guard(state["final_answer"], evidence)
+        if not res.flags:
+            return {}
+        return {"final_answer": state["final_answer"] + "\n\n_Check: " + "; ".join(res.flags) + "._",
+                "guard_flags": [*state.get("guard_flags", []), *res.flags]}
+
     g = StateGraph(AgentState)
+    g.add_node("input_guard", guard)
     g.add_node("planner", planner)
     g.add_node("executor", executor)
     g.add_node("tools", run_tools)
     g.add_node("step_check", step_check)
     g.add_node("replanner", replanner)
     g.add_node("answerer", answerer)
-    g.add_edge(START, "planner")
+    g.add_node("output_guard", check_answer)
+    g.add_edge(START, "input_guard")
+    g.add_conditional_edges("input_guard", lambda s: END if s.get("status") == "refused" else "planner",
+                            ["planner", END])
     g.add_conditional_edges("planner", lambda s: END if s.get("status") == "refused"
                             else ("executor" if s["plan"] else "answerer"), ["executor", "answerer", END])
     g.add_conditional_edges("executor", after_executor, ["tools", "step_check"])
     g.add_edge("tools", "executor")
     g.add_conditional_edges("step_check", after_step_check, ["executor", "replanner", "answerer"])
     g.add_conditional_edges("replanner", after_replanner, ["executor", "answerer"])
-    g.add_edge("answerer", END)
+    g.add_edge("answerer", "output_guard")
+    g.add_edge("output_guard", END)
     return g.compile()
 
 

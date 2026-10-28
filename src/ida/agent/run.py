@@ -33,8 +33,12 @@ def summarize_tool(event: dict) -> str:
     return f"exit {o.get('exit_code')}, images {[i['name'] for i in o.get('images', [])]}, stdout: {o.get('stdout', '')}"
 
 
-def print_update(node: str, update: dict, seen_events: int = 0) -> None:
-    if node == "planner":
+def print_update(node: str, update: dict, seen_events: int = 0, seen_flags: int = 0) -> None:
+    if node == "input_guard" and update.get("status") == "refused":
+        print(f"[input_guard] BLOCKED ({'; '.join(update['guard_flags'])}): {update['final_answer']}")
+    elif node == "output_guard" and update:
+        print(f"[output_guard] {'; '.join(update['guard_flags'])}")
+    elif node == "planner":
         if update.get("status") == "refused":
             print(f"[planner] REFUSED: {update['final_answer']}")
         for s in update.get("plan", []):
@@ -46,6 +50,8 @@ def print_update(node: str, update: dict, seen_events: int = 0) -> None:
     elif node == "tools":
         for e in update["tool_log"][seen_events:]:
             print(f"  [tools] {e['name']} ({e['duration_s']}s): {summarize_tool(e)[:400]}")
+        for f in update.get("guard_flags", [])[seen_flags:]:
+            print(f"  [guard] {f}")
     elif node == "step_check":
         s = update["plan"][update["current"] - 1]
         print(f"[step {s['id']} {s['status']}] {str(s['result'])[:300]}")
@@ -64,7 +70,8 @@ async def ask(graph, question: str) -> dict:
             async for chunk in graph.astream({"question": question}, stream_mode="updates",
                                              config=trace.config):
                 for node, update in chunk.items():
-                    print_update(node, update, len(final.get("tool_log", [])))
+                    update = update or {}          # a node that changes nothing streams None
+                    print_update(node, update, len(final.get("tool_log", [])), len(final.get("guard_flags", [])))
                     final |= update
         except Exception as e:  # noqa: BLE001 -- report and continue with the next question
             final |= {"status": "error", "final_answer": f"Run failed: {type(e).__name__}: {str(e)[:300]}"}
