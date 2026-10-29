@@ -31,6 +31,7 @@ pytest
 ```bash
 python -m ida.agent.run "Which pump had the most critical alarms and what does the manual say?"
 python -m ida.agent.run --demo                              # 5 sample questions, step by step
+streamlit run src/ida/ui/app.py                              # chat UI with live agent steps
 python data/generate_db.py --out data/sensors.db            # build the DB once
 python -m ida.mcp_server.manuals_index                       # build the manual search index once
 python -m ida.mcp_server.sandbox --build                     # build the run_python Docker image once

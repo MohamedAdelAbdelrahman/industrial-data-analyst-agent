@@ -58,6 +58,7 @@ Every step ends with a commit and push. Tick the box when its "done when" check 
 - [ ] **Step 9: Streamlit UI** (3 h)
   Chat on the left. On the right, live steps: the plan, each tool call (SQL shown, manual hits, plots) and cost/steps counters, via `graph.stream()`. Add a link to the Langfuse trace.
   Done when: the demo questions run from the UI.
+  Progress: `src/ida/ui/app.py` (chat + live step panel with SQL, manual hits, plots, counters, trace link) and `ida.ui.runtime` (one MCP session on a background loop, shared across reruns); 4 tests in `tests/test_ui.py`. Demo Q1 verified live through the app; the remaining demos are still to run in the browser (Q3 needs Docker Desktop running).
 
 - [ ] **Step 10: Evaluation set and harness** (4 h)
   30–40 tasks in `eval/tasks.yaml` plus `eval/run_eval.py` → `eval/results/<date>.json` and a markdown table. Run 2 configs: `SQL_BACKEND=llm` vs `SQL_BACKEND=finetuned`.
