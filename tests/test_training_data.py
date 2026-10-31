@@ -17,9 +17,12 @@ from ida.training_data import (
     db_values,
     generate,
     in_test_split,
+    mixes_units,
     parse_batch,
     question_key,
     read_jsonl,
+    recheck,
+    same_value,
     sql_skeleton,
     thinnest_category,
     write_splits,
@@ -64,16 +67,90 @@ def test_check_pair_rejects(small_db, sql, reason):
     assert check_pair(small_db, "Which machines?", sql, 5) == (None, reason)
 
 
-GOOD_ONLY = "SELECT AVG(value) FROM readings WHERE quality = 'good'"
+GOOD_ONLY = "SELECT AVG(value) FROM readings WHERE sensor_id = 1 AND quality = 'good'"
 
 
 def test_quality_filter_needs_a_question_that_asks_for_it(small_db):
     assert check_pair(small_db, "Average reading?", GOOD_ONLY, 5) == (None, "unasked quality filter")
     assert check_pair(small_db, "Average over good readings?", GOOD_ONLY, 5) == (GOOD_ONLY, None)
-    in_list = "SELECT AVG(value) FROM readings WHERE quality IN ('good', 'uncertain')"
+    in_list = "SELECT AVG(value) FROM readings WHERE sensor_id = 1 AND quality IN ('good', 'uncertain')"
     assert check_pair(small_db, "Average reading?", in_list, 5) == (None, "unasked quality filter")
     unrelated = "SELECT name FROM machines WHERE status = 'running'"
     assert check_pair(small_db, "Average reading?", unrelated, 5) == (unrelated, None)
+
+
+# Most machines share a plant, so sorting on plant ties; machine names are unique.
+RANKED = "WITH r AS (SELECT name, ROW_NUMBER() OVER (ORDER BY {key}) AS rn FROM machines) SELECT name FROM r "
+
+
+@pytest.mark.parametrize("sql", [
+    "SELECT name FROM machines ORDER BY plant LIMIT 1",
+    "SELECT name, plant AS p FROM machines ORDER BY p LIMIT 1",
+    "SELECT name, plant FROM machines ORDER BY 2 LIMIT 1",
+    "SELECT name FROM machines ORDER BY plant, name LIMIT 1",                # a tiebreaker just hides it
+    "SELECT name FROM machines ORDER BY plant LIMIT 1 OFFSET 2",
+    "WITH t AS (SELECT name FROM machines ORDER BY plant LIMIT 2) SELECT name FROM t",
+    RANKED.format(key="plant") + "WHERE rn = 1",
+    RANKED.format(key="plant, name") + "WHERE rn <= 2",
+])
+def test_check_pair_rejects_a_cut_through_a_tie(small_db, sql):
+    assert check_pair(small_db, "Which machine?", sql, 5) == (None, "hides a tie")
+
+
+@pytest.mark.parametrize("sql", [
+    "SELECT name FROM machines ORDER BY name LIMIT 1",
+    "SELECT name FROM machines ORDER BY name DESC LIMIT 3 OFFSET 1",
+    "SELECT name FROM machines ORDER BY plant LIMIT 1000",                   # nothing is cut off
+    "WITH t AS (SELECT name FROM machines ORDER BY name LIMIT 2) SELECT name FROM t",
+    RANKED.format(key="name") + "WHERE rn = 1",
+    RANKED.format(key="plant").strip(),                                      # numbered, nothing dropped
+    "SELECT name FROM (SELECT name, RANK() OVER (ORDER BY plant) AS r FROM machines) WHERE r = 1",
+    "SELECT name FROM machines WHERE install_date = (SELECT MAX(install_date) FROM machines)",
+])
+def test_check_pair_keeps_rankings_without_a_hidden_tie(small_db, sql):
+    assert check_pair(small_db, "Which machine?", sql, 5) == (sql, None)
+
+
+def test_check_pair_rejects_limit_without_order(small_db):
+    sql = "SELECT name FROM machines LIMIT 1"
+    assert check_pair(small_db, "Which machine?", sql, 5) == (None, "LIMIT without ORDER BY")
+
+
+def test_ties_survive_julianday_rounding():
+    assert same_value(8.00000000372529, 7.99999999627471)
+    assert same_value("Pump-01", "Pump-01") and same_value(None, None)
+    assert not same_value(8.0, 8.5) and not same_value("Pump-01", "Pump-02") and not same_value(None, 0)
+
+
+READINGS = "readings r JOIN sensors s ON r.sensor_id = s.sensor_id"
+
+
+@pytest.mark.parametrize("sql, mixed", [
+    (f"SELECT MAX(r.value) FROM {READINGS}", True),
+    ("SELECT MAX(peak_value) FROM alarms WHERE alarm_type = 'HIGH'", True),
+    ("SELECT name FROM alarms a JOIN machines m ON a.machine_id = m.machine_id ORDER BY a.peak_value DESC", True),
+    (f"SELECT AVG(s.warn_threshold - r.value) FROM {READINGS}", True),       # a difference keeps the unit
+    (f"SELECT AVG(r.value) FROM {READINGS} WHERE s.sensor_type = 'rpm'", False),
+    (f"SELECT s.sensor_type, MAX(r.value) FROM {READINGS} GROUP BY s.sensor_type", False),
+    (f"SELECT AVG(r.value) FROM {READINGS} WHERE s.mount_location = 'outlet'", False),
+    (f"SELECT MAX(r.value / s.crit_threshold) FROM {READINGS}", False),      # a ratio has no unit
+    (f"SELECT SUM(CASE WHEN r.value > s.warn_threshold THEN 1 ELSE 0 END) FROM {READINGS}", False),
+    ("SELECT COUNT(*) FROM readings", False),
+])
+def test_mixes_units(sql, mixed):
+    assert mixes_units(sql) is mixed
+
+
+def test_recheck_moves_failures_to_rejected(tmp_path, small_db):
+    raw, rejected = tmp_path / "raw.jsonl", tmp_path / "rejected.jsonl"
+    pairs = [{"question": "Which machines run?", "sql": GOOD_SQL, "category": "joins", "model": "m"},
+             {"question": "First plant?", "sql": "SELECT name FROM machines ORDER BY plant LIMIT 1",
+              "category": "ranking_cte", "model": "m"}]
+    raw.write_text("".join(json.dumps(p) + "\n" for p in pairs), encoding="utf-8")
+
+    assert recheck(small_db, raw, rejected, 5) == {"kept": 1, "hides a tie": 1}
+    assert read_jsonl(raw) == pairs[:1]
+    assert read_jsonl(rejected) == [{**pairs[1], "reason": "hides a tie"}]
 
 
 def test_parse_batch_handles_fences_and_junk():

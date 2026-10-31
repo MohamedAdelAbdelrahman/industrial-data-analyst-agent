@@ -13,6 +13,7 @@ between train and test.
 
     python -m ida.training_data generate --max-requests 30     # add pairs, resumes from raw.jsonl
     python -m ida.training_data split                          # raw.jsonl -> train.jsonl + test.jsonl
+    python -m ida.training_data recheck                        # apply new rules to the pairs already kept
     python -m ida.training_data stats                          # counts per category, model and split
 """
 import argparse
@@ -48,6 +49,9 @@ TEMPERATURE = 0.9            # variety matters more here than in the agent
 PAUSE_S = 6                  # stays under the per-minute limit
 BENCHMARK_MODEL = "gemini-3.1-flash-lite"    # never writes pairs: it is the Gemini scored on the test split
 ASKS_FOR_QUALITY = re.compile(r"good|quality|uncertain|reliable|valid|trust", re.IGNORECASE)
+TIE_TOLERANCE = 1e-6         # julianday() arithmetic: two 8 h events can differ in the 9th decimal
+MEASURED = {"value", "peak_value"}                     # unit depends on the sensor type
+ONE_UNIT = {"sensor_type", "unit", "sensor_id", "mount_location"}    # columns that narrow those to one unit
 
 CATEGORIES = {
     "filter_count": "Single-table lookups, filters and counts (machines by status/plant/line, sensors by "
@@ -70,7 +74,7 @@ CATEGORIES = {
                   "against thresholds, margin to the limit, time spent above a limit.",
     "maintenance": "maintenance_events: cost_eur totals by type, technician or machine, corrective events "
                    "linked to alarms through related_alarm_id, machines never serviced, last service date.",
-    "ranking_cte": "Top-N, worst and best per group, using CTEs and window functions (ROW_NUMBER, RANK, "
+    "ranking_cte": "Top-N, worst and best per group, using CTEs and window functions (RANK, DENSE_RANK, "
                    "LAG), comparing one group with another, and machines with no alarms (LEFT JOIN).",
 }
 
@@ -139,6 +143,11 @@ Question style: {style}
 - readings.value is NULL when quality = 'bad', and AVG/MIN/MAX skip NULL by themselves. Filter on quality
   ONLY when the question asks for it: 'uncertain' readings count unless the question says otherwise.
 - An alarm is active when cleared_at IS NULL.
+- Rankings must show ties: for "the highest", "the most" or "top N" use RANK() or = (SELECT MAX(...)), so
+  that every tied row appears. ORDER BY ... LIMIT and ROW_NUMBER() are rejected if they cut through a tie.
+  LIMIT always needs an ORDER BY.
+- readings.value and alarms.peak_value have a different unit per sensor type (degC, bar, rpm, ...). Only
+  aggregate or rank them within one sensor type or sensor. Ratios to a threshold are fine.
 - Answer "which machine" questions with machine names, not ids. No SELECT *, no comments, no double quotes.
 - Pick filters that match real rows: the result must not be empty, NULL or a count of 0.
 - Range from easy to hard. Vary the columns, filters and SQL structure; do not just change a name.
@@ -166,6 +175,89 @@ def question_key(question: str) -> str:
     return re.sub(r"\W+", " ", question.lower()).strip()
 
 
+def same_value(a, b) -> bool:
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+        return abs(a - b) < TIE_TOLERANCE
+    return a == b
+
+
+def first_sort_key(select: exp.Select) -> exp.Expression:
+    """The first ORDER BY key as an expression that can be selected: aliases and `ORDER BY 2` resolved.
+    Later keys are ignored because a tiebreaker such as `name` only hides the tie."""
+    key = select.args["order"].expressions[0].this
+    if isinstance(key, exp.Literal) and key.is_int:
+        return select.selects[int(key.this) - 1].unalias()
+    if isinstance(key, exp.Column) and not key.table:
+        for column in select.selects:
+            if column.alias == key.name:
+                return column.unalias()
+    return key
+
+
+def limit_cuts_tie(db_path: Path, tree: exp.Expression, select: exp.Select, timeout_s: float) -> bool:
+    """Reruns one LIMIT with a row more, plus its sort key, to compare the rows on each side of the cut."""
+    limit, offset = select.args["limit"].expression, select.args.get("offset")
+    if not isinstance(limit, exp.Literal):
+        return False
+    start = int(offset.expression.this) if offset else 0
+    end = start + int(limit.this)
+    probe = select.copy()
+    probe.select(first_sort_key(select).copy(), copy=False)
+    probe.limit(end + 1, copy=False)
+    probe.set("offset", None)
+    if select is not tree and tree.args.get("with_"):       # a LIMIT inside a CTE may read the other CTEs
+        probe.set("with_", tree.args["with_"].copy())
+    keys = [r[-1] for r in run_query(db_path, probe.sql(dialect="sqlite"), end + 1, timeout_s).rows]
+    return any(0 < cut < len(keys) and same_value(keys[cut - 1], keys[cut]) for cut in (start, end))
+
+
+def row_number_cuts_tie(db_path: Path, tree: exp.Expression, sql: str, timeout_s: float) -> bool:
+    """ROW_NUMBER() numbers tied rows anyway, so `rn = 1` drops all but one. With RANK() they stay, so a
+    tie at the cut-off shows up as extra rows."""
+    ranked = tree.copy()
+    windows = [w for w in ranked.find_all(exp.Window) if isinstance(w.this, exp.RowNumber)]
+    if not windows:
+        return False
+    for window in windows:
+        window.set("this", exp.Anonymous(this="RANK"))
+        if order := window.args.get("order"):
+            order.set("expressions", order.expressions[:1])
+    counts = [run_query(db_path, f"SELECT COUNT(*) FROM ({q})", 1, timeout_s).rows[0][0]
+              for q in (sql, ranked.sql(dialect="sqlite"))]
+    return counts[0] != counts[1]
+
+
+def arbitrary_rows(db_path: Path, sql: str, timeout_s: float) -> str | None:
+    """Why the result rests on an arbitrary choice between rows, if it does: with Compressor-02 and -03 both
+    at 8 h, `ORDER BY hours DESC LIMIT 1` names one of them and the pair teaches the model to hide the other.
+    A correlated LIMIT cannot run on its own, so it counts as an SQL error."""
+    tree = sqlglot.parse_one(sql, read="sqlite")
+    for select in tree.find_all(exp.Select):
+        if select.args.get("limit"):
+            if not select.args.get("order"):
+                return "LIMIT without ORDER BY"
+            if limit_cuts_tie(db_path, tree, select, timeout_s):
+                return "hides a tie"
+    return "hides a tie" if row_number_cuts_tie(db_path, tree, sql, timeout_s) else None
+
+
+def mixes_units(sql: str) -> bool:
+    """True if readings or peak values are aggregated or ranked across sensor types. The number means
+    nothing (rpm dwarfs degC), so the top row is always a fast sensor, whatever the machine does."""
+    tree = sqlglot.parse_one(sql, read="sqlite")
+    for join in tree.find_all(exp.Join):                    # every join to sensors mentions sensor_id
+        join.set("on", None)
+    if any(c.name in ONE_UNIT for c in tree.find_all(exp.Column)):
+        return False
+    for node in tree.find_all(exp.Avg, exp.Sum, exp.Min, exp.Max, exp.Ordered):
+        if not any(c.name in MEASURED for c in node.find_all(exp.Column)) or node.find(exp.Case):
+            continue                                        # SUM(CASE ... THEN 1) is a count
+        if not any(c.name.endswith("_threshold") for d in node.find_all(exp.Div)
+                   for c in d.expression.find_all(exp.Column)):    # value / threshold has no unit
+            return True
+    return False
+
+
 def check_pair(db_path: Path, question: str, sql: str, timeout_s: float) -> tuple[str | None, str | None]:
     """(cleaned SQL, None) for a usable query, else (None, reason)."""
     sql = " ".join(sql.split())
@@ -179,17 +271,19 @@ def check_pair(db_path: Path, question: str, sql: str, timeout_s: float) -> tupl
         return None, "double quotes"
     try:
         sql = validate_sql(sql)
-        result = run_query(db_path, sql, 2, timeout_s)
+        rows = run_query(db_path, sql, 2, timeout_s).rows
+        if not rows or (len(rows) == 1 and all(c in (None, 0) for c in rows[0])):
+            return None, "empty result"          # a wrong filter also gives 0 / NULL, so it proves nothing
+        if mixes_units(sql):
+            return None, "mixes units"
+        reason = arbitrary_rows(db_path, sql, timeout_s)
     except SQLValidationError:
         return None, "failed the validator"
     except QueryTimeoutError:
         return None, "timeout"
     except sqlite3.Error:
         return None, "SQL error"
-    rows = result.rows
-    if not rows or (len(rows) == 1 and all(c in (None, 0) for c in rows[0])):
-        return None, "empty result"              # a wrong filter also gives 0 / NULL, so it proves nothing
-    return sql, None
+    return (None, reason) if reason else (sql, None)
 
 
 def actual_category(category: str, sql: str) -> str:
@@ -288,6 +382,21 @@ def generate(pool: ModelPool, db_path: Path, schema: str, raw_path: Path = RAW_P
     return outcome
 
 
+def recheck(db_path: Path, raw_path: Path = RAW_PATH, rejected_path: Path = REJECTED_PATH,
+            timeout_s: float = 10.0) -> Counter:
+    """Run the current check_pair over the kept pairs and move the failures to rejected.jsonl."""
+    kept, rejected = [], []
+    for row in read_jsonl(raw_path):
+        _, reason = check_pair(db_path, row["question"], row["sql"], timeout_s)
+        if reason:
+            rejected.append({**row, "reason": reason})
+        else:
+            kept.append(row)
+    append_jsonl(rejected_path, rejected)
+    raw_path.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in kept), encoding="utf-8")
+    return Counter({"kept": len(kept)}) + Counter(r["reason"] for r in rejected)
+
+
 def write_splits(schema: str, raw_path: Path = RAW_PATH, out_dir: Path = DATA_DIR) -> tuple[int, int]:
     """train.jsonl and test.jsonl with the exact prompt the model gets at inference time."""
     splits: dict[str, list[dict]] = {"train": [], "test": []}
@@ -316,7 +425,7 @@ def print_stats(raw_path: Path = RAW_PATH, rejected_path: Path = REJECTED_PATH) 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("command", choices=["generate", "split", "stats"])
+    ap.add_argument("command", choices=["generate", "split", "recheck", "stats"])
     ap.add_argument("--max-requests", type=int, default=30, help="requests this run (the UI needs quota too)")
     ap.add_argument("--target", type=int, default=TARGET_PAIRS)
     args = ap.parse_args()
@@ -334,6 +443,8 @@ def main() -> None:
         print(dict(outcome.most_common()))
     elif args.command == "split":
         print("train {}, test {}".format(*write_splits(schema)))
+    elif args.command == "recheck":
+        print(dict(recheck(settings.db_path, timeout_s=settings.query_timeout_s).most_common()))
     else:
         print_stats()
 

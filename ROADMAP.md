@@ -41,7 +41,7 @@ Every step ends with a commit and push. Tick the box when its "done when" check 
   - **b. Training** (3 h, Google Colab free T4 GPU): QLoRA with Unsloth on `Qwen2.5-Coder-1.5B-Instruct` from Hugging Face. Notebook: `finetune/train_colab.ipynb`. Export a GGUF (q4_k_m) and download it.
   - **c. Serving** (1 h, local): `ollama create ida-sql -f finetune/Modelfile`, then set `SQL_BACKEND=finetuned`.
   Done when: execution accuracy on the test split is reported for base Qwen, fine-tuned Qwen and Gemini.
-  Progress (a): `ida.training_data` generates, checks and splits the pairs (25 tests in `tests/test_training_data.py`). 493 of 1,500 pairs so far (453 train, 40 test, 469 distinct SQL shapes), in `finetune/data/`. Each new run resumes from `raw.jsonl`: `python -m ida.training_data generate --max-requests 60`, then `split`.
+  Progress (a): `ida.training_data` generates, checks and splits the pairs (54 tests in `tests/test_training_data.py`). 461 of 1,500 pairs so far (423 train, 38 test, 438 distinct SQL shapes), in `finetune/data/`, after `recheck` removed 32 pairs that hid ties or mixed units. Each new run resumes from `raw.jsonl`: `python -m ida.training_data generate --max-requests 60`, then `split`.
 
 - [x] **Step 7: Langfuse tracing** (1 h)
   Self-host with docker compose or use the cloud free tier. Add the callback handler and task tags.
