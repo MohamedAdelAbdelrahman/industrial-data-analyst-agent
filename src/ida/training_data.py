@@ -233,6 +233,10 @@ def arbitrary_rows(db_path: Path, sql: str, timeout_s: float) -> str | None:
     A correlated LIMIT cannot run on its own, so it counts as an SQL error."""
     tree = sqlglot.parse_one(sql, read="sqlite")
     for select in tree.find_all(exp.Select):
+        columns = [c.unalias() for c in select.selects]     # SQLite fills a bare column from one MAX row
+        if (not select.args.get("group") and any(isinstance(c, (exp.Max, exp.Min)) for c in columns)
+                and any(isinstance(c, exp.Column) for c in columns)):
+            return "bare column beside MIN/MAX"
         if select.args.get("limit"):
             if not select.args.get("order"):
                 return "LIMIT without ORDER BY"

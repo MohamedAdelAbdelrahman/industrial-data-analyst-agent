@@ -116,6 +116,13 @@ def test_check_pair_rejects_limit_without_order(small_db):
     assert check_pair(small_db, "Which machine?", sql, 5) == (None, "LIMIT without ORDER BY")
 
 
+def test_check_pair_rejects_a_bare_column_beside_max(small_db):
+    bare = "SELECT name, MAX(install_date) FROM machines"
+    assert check_pair(small_db, "Newest machine?", bare, 5) == (None, "bare column beside MIN/MAX")
+    grouped = "SELECT plant, MAX(install_date) FROM machines GROUP BY plant"
+    assert check_pair(small_db, "Newest per plant?", grouped, 5) == (grouped, None)
+
+
 def test_ties_survive_julianday_rounding():
     assert same_value(8.00000000372529, 7.99999999627471)
     assert same_value("Pump-01", "Pump-01") and same_value(None, None)
