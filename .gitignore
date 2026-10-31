@@ -13,3 +13,4 @@ eval/results/*.raw.json
 .ruff_cache/
 data/cache/
 finetune/data/rejected.jsonl
+finetune/model/

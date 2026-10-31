@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 from langchain_core.runnables import RunnableLambda
 
+from ida.mcp_server.db import run_query
 from ida.mcp_server.sql_generator import build_prompt
 from ida.model_pool import ModelPool, QuotaMemory
 from ida.training_data import (
@@ -19,6 +20,7 @@ from ida.training_data import (
     in_test_split,
     mixes_units,
     parse_batch,
+    query_fingerprint,
     question_key,
     read_jsonl,
     recheck,
@@ -232,16 +234,43 @@ def test_generate_stops_at_target(tmp_path, small_db):
     assert outcome == {"kept": 1}
 
 
-def test_splits_use_the_inference_prompt_and_do_not_overlap(tmp_path):
-    raw = tmp_path / "raw.jsonl"
-    pairs = [{"question": f"Q{i}", "sql": f"SELECT col{i} FROM machines", "category": "joins", "model": "m"}
-             for i in range(200)]
-    raw.write_text("".join(json.dumps(p) + "\n" for p in pairs), encoding="utf-8")
+def write_raw(path, sql_list):
+    pairs = [{"question": f"Q{i}", "sql": sql, "category": "joins", "model": "m"} for i, sql in enumerate(sql_list)]
+    path.write_text("".join(json.dumps(p) + "\n" for p in pairs), encoding="utf-8")
 
-    n_train, n_test = write_splits("SCHEMA", raw, tmp_path)
+
+def test_splits_use_the_inference_prompt_and_do_not_overlap(tmp_path, small_db):
+    raw = tmp_path / "raw.jsonl"
+    write_raw(raw, ["SELECT " + " + ".join(["machine_id"] * (i + 1)) + " FROM machines" for i in range(200)])
+
+    n_train, n_test = write_splits("SCHEMA", small_db, raw, tmp_path)
     train, test = read_jsonl(tmp_path / "train.jsonl"), read_jsonl(tmp_path / "test.jsonl")
     assert (n_train, n_test) == (len(train), len(test))
     assert n_train + n_test == 200 and 5 <= n_test <= 40
     assert not {r["question"] for r in train} & {r["question"] for r in test}
     assert train[0]["prompt"] == build_prompt("SCHEMA", train[0]["question"])
     assert train[0]["completion"] == train[0]["sql"]
+
+
+JOIN_A = ("SELECT a.alarm_id FROM alarms a JOIN machines m ON a.machine_id = m.machine_id "
+          "WHERE m.plant = 'Plant A' AND a.severity = 'critical'")
+JOIN_B = ("SELECT a.alarm_id FROM machines m JOIN alarms a ON m.machine_id = a.machine_id "
+          "WHERE a.severity = 'critical' AND m.plant = 'Plant A'")
+
+
+def test_fingerprint_sees_through_join_order_but_not_other_queries(small_db):
+    assert sql_skeleton(JOIN_A) != sql_skeleton(JOIN_B)
+    assert query_fingerprint(small_db, JOIN_A) == query_fingerprint(small_db, JOIN_B)
+    same_answer = "SELECT 'Plant B'", "SELECT plant FROM machines WHERE machine_id = 1"       # same rows only
+    assert run_query(small_db, same_answer[1], 1, 5).rows == [("Plant B",)]
+    assert query_fingerprint(small_db, same_answer[0]) != query_fingerprint(small_db, same_answer[1])
+
+
+def test_splits_drop_a_test_pair_that_repeats_a_training_query(tmp_path, small_db, monkeypatch):
+    raw = tmp_path / "raw.jsonl"
+    other = "SELECT name FROM machines WHERE status = 'running'"
+    write_raw(raw, [JOIN_A, JOIN_B, other])
+    monkeypatch.setattr("ida.training_data.in_test_split", lambda sql: sql in (JOIN_B, other))
+
+    assert write_splits("SCHEMA", small_db, raw, tmp_path) == (1, 1)
+    assert [r["sql"] for r in read_jsonl(tmp_path / "test.jsonl")] == [other]

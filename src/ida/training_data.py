@@ -49,6 +49,7 @@ TEMPERATURE = 0.9            # variety matters more here than in the agent
 PAUSE_S = 6                  # stays under the per-minute limit
 BENCHMARK_MODEL = "gemini-3.1-flash-lite"    # never writes pairs: it is the Gemini scored on the test split
 ASKS_FOR_QUALITY = re.compile(r"good|quality|uncertain|reliable|valid|trust", re.IGNORECASE)
+FINGERPRINT_ROWS = 5000      # enough to tell two queries apart
 TIE_TOLERANCE = 1e-6         # julianday() arithmetic: two 8 h events can differ in the 9th decimal
 MEASURED = {"value", "peak_value"}                     # unit depends on the sensor type
 ONE_UNIT = {"sensor_type", "unit", "sensor_id", "mount_location"}    # columns that narrow those to one unit
@@ -313,6 +314,17 @@ def in_test_split(sql: str, percent: int = TEST_PERCENT) -> bool:
     return int(hashlib.sha1(sql_skeleton(sql).encode()).hexdigest(), 16) % 100 < percent
 
 
+def query_fingerprint(db_path: Path, sql: str, timeout_s: float = 30.0) -> tuple:
+    """Same tables, literals and result rows: the same query, even with the joins written in another order,
+    which sql_skeleton cannot see. The result alone is not enough: many questions have the answer 'Mazak'."""
+    tree = sqlglot.parse_one(sql, read="sqlite")
+    tables = {t.name.lower() for t in tree.find_all(exp.Table)} - {c.alias.lower() for c in tree.find_all(exp.CTE)}
+    literals = {lit.this.lower() for lit in tree.find_all(exp.Literal)}
+    rows = run_query(db_path, sql, FINGERPRINT_ROWS, timeout_s).rows
+    cells = sorted(sorted(repr(round(c, 6) if isinstance(c, float) else c) for c in row) for row in rows)
+    return tuple(sorted(tables)), tuple(sorted(literals)), repr(cells)
+
+
 def read_jsonl(path: Path) -> list[dict]:
     if not path.exists():
         return []
@@ -401,12 +413,15 @@ def recheck(db_path: Path, raw_path: Path = RAW_PATH, rejected_path: Path = REJE
     return Counter({"kept": len(kept)}) + Counter(r["reason"] for r in rejected)
 
 
-def write_splits(schema: str, raw_path: Path = RAW_PATH, out_dir: Path = DATA_DIR) -> tuple[int, int]:
-    """train.jsonl and test.jsonl with the exact prompt the model gets at inference time."""
+def write_splits(schema: str, db_path: Path, raw_path: Path = RAW_PATH, out_dir: Path = DATA_DIR) -> tuple[int, int]:
+    """train.jsonl and test.jsonl with the exact prompt the model gets at inference time. A test pair that
+    repeats a training query is dropped, not moved: the model has effectively seen it already."""
     splits: dict[str, list[dict]] = {"train": [], "test": []}
     for r in read_jsonl(raw_path):
         side = "test" if in_test_split(r["sql"]) else "train"
         splits[side].append({"prompt": build_prompt(schema, r["question"]), "completion": r["sql"], **r})
+    seen = {query_fingerprint(db_path, r["sql"]) for r in splits["train"]}
+    splits["test"] = [r for r in splits["test"] if query_fingerprint(db_path, r["sql"]) not in seen]
     out_dir.mkdir(parents=True, exist_ok=True)
     for side, rows in splits.items():
         path = out_dir / f"{side}.jsonl"
@@ -416,8 +431,8 @@ def write_splits(schema: str, raw_path: Path = RAW_PATH, out_dir: Path = DATA_DI
 
 def print_stats(raw_path: Path = RAW_PATH, rejected_path: Path = REJECTED_PATH) -> None:
     rows, rejected = read_jsonl(raw_path), read_jsonl(rejected_path)
-    test = sum(in_test_split(r["sql"]) for r in rows)
-    print(f"{len(rows)} pairs ({len(rows) - test} train, {test} test), "
+    train, test = (len(read_jsonl(raw_path.parent / f"{side}.jsonl")) for side in ("train", "test"))
+    print(f"{len(rows)} pairs ({train} train, {test} test, {len(rows) - train - test} test repeats dropped), "
           f"{len({sql_skeleton(r['sql']) for r in rows})} distinct SQL shapes")
     for title, counts in [("category", Counter(r["category"] for r in rows)),
                           ("model", Counter(r["model"] for r in rows)),
@@ -446,7 +461,7 @@ def main() -> None:
                            timeout_s=settings.query_timeout_s)
         print(dict(outcome.most_common()))
     elif args.command == "split":
-        print("train {}, test {}".format(*write_splits(schema)))
+        print("train {}, test {}".format(*write_splits(schema, settings.db_path)))
     elif args.command == "recheck":
         print(dict(recheck(settings.db_path, timeout_s=settings.query_timeout_s).most_common()))
     else:
