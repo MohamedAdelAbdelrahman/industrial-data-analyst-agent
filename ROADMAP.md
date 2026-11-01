@@ -42,7 +42,7 @@ Every step ends with a commit and push. Tick the box when its "done when" check 
   - **c. Serving** (1 h, local): `ollama create ida-sql -f finetune/Modelfile`, then set `SQL_BACKEND=finetuned`.
   Done when: execution accuracy on the test split is reported for base Qwen, fine-tuned Qwen and Gemini.
   Result (a): done. `ida.training_data` generates, checks and splits the pairs (55 tests in `tests/test_training_data.py`). 1,518 pairs (1,380 train, 129 test, 1,282 distinct SQL shapes, 9 test repeats dropped) in `finetune/data/`. To add data: `python -m ida.training_data generate --max-requests 60`, then `split`.
-  Progress (b): `finetune/train_colab.ipynb` is written. It also answers the test split with the base and fine-tuned models (`predictions.jsonl`), and the GGUF and predictions go to `finetune/model/`, which git ignores. The notebook has not been run yet.
+  Progress (b): `finetune/train_colab.ipynb` is written. It also answers the test split with the base and fine-tuned models (`predictions.jsonl`), and the GGUF and predictions go to `finetune/model/`, which git ignores. Training and predictions ran on Colab; the GGUF export needed about 8 GB of temporary space, more than Drive had free, so it now runs on Colab's own disk and copies only the final file to Drive.
 
 - [x] **Step 7: Langfuse tracing** (1 h)
   Self-host with docker compose or use the cloud free tier. Add the callback handler and task tags.
