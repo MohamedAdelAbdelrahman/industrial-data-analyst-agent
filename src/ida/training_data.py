@@ -314,6 +314,11 @@ def in_test_split(sql: str, percent: int = TEST_PERCENT) -> bool:
     return int(hashlib.sha1(sql_skeleton(sql).encode()).hexdigest(), 16) % 100 < percent
 
 
+def result_cells(rows: list[tuple]) -> str:
+    """Query rows as one comparable value: row order and column order do not count."""
+    return repr(sorted(sorted(repr(round(c, 6) if isinstance(c, float) else c) for c in row) for row in rows))
+
+
 def query_fingerprint(db_path: Path, sql: str, timeout_s: float = 30.0) -> tuple:
     """Same tables, literals and result rows: the same query, even with the joins written in another order,
     which sql_skeleton cannot see. The result alone is not enough: many questions have the answer 'Mazak'."""
@@ -321,8 +326,7 @@ def query_fingerprint(db_path: Path, sql: str, timeout_s: float = 30.0) -> tuple
     tables = {t.name.lower() for t in tree.find_all(exp.Table)} - {c.alias.lower() for c in tree.find_all(exp.CTE)}
     literals = {lit.this.lower() for lit in tree.find_all(exp.Literal)}
     rows = run_query(db_path, sql, FINGERPRINT_ROWS, timeout_s).rows
-    cells = sorted(sorted(repr(round(c, 6) if isinstance(c, float) else c) for c in row) for row in rows)
-    return tuple(sorted(tables)), tuple(sorted(literals)), repr(cells)
+    return tuple(sorted(tables)), tuple(sorted(literals)), result_cells(rows)
 
 
 def read_jsonl(path: Path) -> list[dict]:

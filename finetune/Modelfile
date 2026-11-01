@@ -1,0 +1,16 @@
+FROM ./model/Qwen2.5-Coder-1.5B-Instruct.Q4_K_M.gguf
+
+# Same system message and chat format as finetune/train_colab.ipynb: the model learned with them.
+SYSTEM """You write SQLite queries."""
+TEMPLATE """<|im_start|>system
+{{ .System }}<|im_end|>
+<|im_start|>user
+{{ .Prompt }}<|im_end|>
+<|im_start|>assistant
+"""
+
+PARAMETER temperature 0
+PARAMETER num_ctx 2048
+PARAMETER num_predict 300
+PARAMETER stop "<|im_end|>"
+PARAMETER stop "<|endoftext|>"
