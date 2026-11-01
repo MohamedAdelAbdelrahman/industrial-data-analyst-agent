@@ -57,7 +57,7 @@ def test_score(small_db, answer, outcome):
     assert score(small_db, GOLD, answer) == outcome
 
 
-def test_evaluate_leaves_a_missing_gemini_answer_unscored(small_db):
+def test_evaluate_leaves_a_missing_saved_answer_unscored(small_db):
     row = {"question": "q", "category": "c", "gold": GOLD, "base": GOLD, "finetuned": "SELECT nope FROM machines"}
-    outcome = evaluate(small_db, [row], {})[0]["outcome"]
-    assert outcome == {"base": "right", "finetuned": "failed", "gemini": None}
+    outcome = evaluate(small_db, [row], {"gemini": {"q": GOLD}})[0]["outcome"]
+    assert outcome == {"base": "right", "finetuned": "failed", "ollama": None, "gemini": "right"}

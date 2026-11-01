@@ -5,6 +5,7 @@ extra or missing column is wrong. Gemini's score is an upper estimate: Gemini mo
 
 Usage:
     python eval/eval_sql.py --ask-gemini     # asks for the missing Gemini answers (kept, so it can resume), then scores
+    python eval/eval_sql.py --ask-ollama     # the same for the GGUF served by Ollama
     python eval/eval_sql.py                  # scores the answers already there
 """
 import argparse
@@ -17,7 +18,7 @@ from pathlib import Path
 
 from ida.config import get_settings
 from ida.mcp_server.db import QueryTimeoutError, run_query
-from ida.mcp_server.sql_generator import extract_sql
+from ida.mcp_server.sql_generator import OllamaSQLGenerator, build_prompt, extract_sql
 from ida.mcp_server.sql_validator import SQLValidationError, validate_sql
 from ida.model_pool import AllModelsUnavailable, ModelPool, model_pool
 from ida.training_data import BENCHMARK_MODEL, DATA_DIR, PAUSE_S, append_jsonl, read_jsonl, result_cells
@@ -25,10 +26,11 @@ from ida.training_data import BENCHMARK_MODEL, DATA_DIR, PAUSE_S, append_jsonl, 
 MODEL_DIR = DATA_DIR.parent / "model"
 PREDICTIONS = MODEL_DIR / "predictions.jsonl"
 GEMINI_ANSWERS = MODEL_DIR / "gemini.jsonl"
+OLLAMA_ANSWERS = MODEL_DIR / "ollama.jsonl"
 MAX_ROWS = 5000
 TIMEOUT_S = 30.0
 MAX_WAIT_S = 1800
-BACKENDS = ("base", "finetuned", "gemini")
+BACKENDS = ("base", "finetuned", "ollama", "gemini")
 
 
 def score(db_path: Path, gold: str, answer: str) -> str:
@@ -74,11 +76,28 @@ def ask_gemini(tests: list[dict], path: Path = GEMINI_ANSWERS) -> None:
         time.sleep(PAUSE_S)
 
 
-def evaluate(db_path: Path, predictions: list[dict], gemini: dict[str, str]) -> list[dict]:
-    """Each prediction with one outcome per backend; 'gemini' is None until it has an answer."""
+def ask_ollama(tests: list[dict], path: Path = OLLAMA_ANSWERS) -> None:
+    """The served GGUF, through the generator the agent uses. Compare it with 'finetuned' from Colab."""
+    generator = OllamaSQLGenerator(get_settings())
+    done = {r["question"] for r in read_jsonl(path)} if path.exists() else set()
+    todo = [t for t in tests if t["question"] not in done]
+    print(f"{len(done)} answers kept, {len(todo)} to ask")
+    for i, test in enumerate(todo, 1):
+        assert build_prompt(generator.schema, test["question"]) == test["prompt"]
+        append_jsonl(path, [{"question": test["question"], "answer": generator.generate(test["question"])}])
+        print(f"{i}/{len(todo)}", flush=True)
+
+
+def saved_answers(path: Path) -> dict[str, str]:
+    return {r["question"]: r["answer"] for r in read_jsonl(path)} if path.exists() else {}
+
+
+def evaluate(db_path: Path, predictions: list[dict], saved: dict[str, dict[str, str]]) -> list[dict]:
+    """Each prediction with one outcome per backend; a saved backend is None until it has an answer."""
     results = []
     for p in predictions:
-        answers = {"base": p["base"], "finetuned": p["finetuned"], "gemini": gemini.get(p["question"])}
+        answers = {"base": p["base"], "finetuned": p["finetuned"],
+                   **{name: saved.get(name, {}).get(p["question"]) for name in ("ollama", "gemini")}}
         results.append({**p, "outcome": {name: answer and score(db_path, p["gold"], answer)
                                          for name, answer in answers.items()}})
     return results
@@ -96,7 +115,7 @@ def print_report(results: list[dict]) -> None:
         base, tuned = (r["outcome"][name] == "right" for name in ("base", "finetuned"))
         only[(base, tuned)] += 1
     print(f"\nfine-tuned right and base wrong: {only[(False, True)]}, base right and fine-tuned wrong: {only[(True, False)]}")
-    print("\nright per category (base / fine-tuned / gemini)")
+    print("\nright per category (" + " / ".join(BACKENDS) + ")")
     for category in sorted({r["category"] for r in results}):
         rows = [r for r in results if r["category"] == category]
         cells = " / ".join(str(sum(r["outcome"][name] == "right" for r in rows)) for name in BACKENDS)
@@ -106,8 +125,11 @@ def print_report(results: list[dict]) -> None:
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--ask-gemini", action="store_true", help="ask for the missing Gemini answers first")
+    ap.add_argument("--ask-ollama", action="store_true", help="ask for the missing answers from the served GGUF first")
     args = ap.parse_args()
     if args.ask_gemini:
         ask_gemini(read_jsonl(DATA_DIR / "test.jsonl"))
-    gemini = {r["question"]: r["answer"] for r in read_jsonl(GEMINI_ANSWERS)} if GEMINI_ANSWERS.exists() else {}
-    print_report(evaluate(get_settings().db_path, read_jsonl(PREDICTIONS), gemini))
+    if args.ask_ollama:
+        ask_ollama(read_jsonl(DATA_DIR / "test.jsonl"))
+    saved = {"gemini": saved_answers(GEMINI_ANSWERS), "ollama": saved_answers(OLLAMA_ANSWERS)}
+    print_report(evaluate(get_settings().db_path, read_jsonl(PREDICTIONS), saved))

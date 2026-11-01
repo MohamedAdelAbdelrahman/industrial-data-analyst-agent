@@ -35,7 +35,7 @@ Every step ends with a commit and push. Tick the box when its "done when" check 
   Done when: 5 sample questions (one per category) are answered end-to-end from the CLI (`python -m ida.agent.run --demo`).
   Result: 4/5 correct plus the refusal; Q4 misses a tie (kept as a baseline failure for the eval).
 
-- [ ] **Step 6b: Fine-tune the Text-to-SQL model** (6 h, split across a and b below)
+- [x] **Step 6b: Fine-tune the Text-to-SQL model** (6 h, split across a and b below)
   Until this step, `query_database` uses Gemini to write SQL (`SQL_BACKEND=llm`).
   - **a. Training data** (2 h, local): Gemini (free tier) writes about 1,500 question→SQL pairs for `schema.sql` covering joins, aggregates, time windows and the NULL/active-alarm traps. **Every SQL is executed** on `sensors.db` and only pairs that run and return rows are kept. A held-out test split of about 150 pairs is never trained on. Output: `finetune/data/{train,test}.jsonl`.
   - **b. Training** (3 h, Google Colab free T4 GPU): QLoRA with Unsloth on `Qwen2.5-Coder-1.5B-Instruct` from Hugging Face. Notebook: `finetune/train_colab.ipynb`. Export a GGUF (q4_k_m) and download it.
@@ -44,7 +44,7 @@ Every step ends with a commit and push. Tick the box when its "done when" check 
   Result (a): done. `ida.training_data` generates, checks and splits the pairs (55 tests in `tests/test_training_data.py`). 1,518 pairs (1,380 train, 129 test, 1,282 distinct SQL shapes, 9 test repeats dropped) in `finetune/data/`. To add data: `python -m ida.training_data generate --max-requests 60`, then `split`.
   Progress (b): `finetune/train_colab.ipynb` is written. It also answers the test split with the base and fine-tuned models (`predictions.jsonl`), and the GGUF and predictions go to `finetune/model/`, which git ignores. Training and predictions ran on Colab; the GGUF export needed about 8 GB of temporary space, more than Drive had free, so it now runs on Colab's own disk and copies only the final file to Drive. Validation loss per epoch: 0.0403, 0.0358, 0.0342.
   Result (scores): `python eval/eval_sql.py`, 129 test questions, same rows as the gold SQL: base Qwen 37 (28.7%), fine-tuned Qwen 81 (62.8%), gemini-3.1-flash-lite 99 (76.7%). Gemini's score is an upper estimate, because Gemini models wrote the gold SQL.
-  Progress (c): `finetune/Modelfile` is written. Still to do: install Ollama, run `ollama create`, and check that the GGUF scores like the Colab model before setting `SQL_BACKEND=finetuned`.
+  Result (c): done. The GGUF served by Ollama (`python eval/eval_sql.py --ask-ollama`) scores 83 of 129 (64.3%), level with the Colab model, and `query_database` runs on it over MCP. `.env` stays on `SQL_BACKEND=llm` until Step 10 compares both in the agent. The MCP server reads `SQL_BACKEND` from `.env`: a value set only in the shell does not reach it.
 
 - [x] **Step 7: Langfuse tracing** (1 h)
   Self-host with docker compose or use the cloud free tier. Add the callback handler and task tags.
