@@ -17,6 +17,33 @@ The project also covers Langfuse tracing, layered guardrails, a Streamlit UI tha
 - "Plot the spindle temperature of CNC-Mill-03 around its last HIGH_HIGH alarm."
 - "What was the total corrective maintenance cost per plant, and which machine type drives it?"
 
+## Results
+
+**Text-to-SQL on its own** (`eval/eval_sql.py`, 129 held-out test questions; a question counts as right when the query returns the same rows as the gold SQL):
+
+| Model | Execution accuracy |
+|---|---|
+| Qwen2.5-Coder-1.5B, base | 28.7% |
+| Qwen2.5-Coder-1.5B, QLoRA fine-tuned (served by Ollama, 4-bit GGUF) | 64.3% |
+| gemini-3.1-flash-lite | 76.7% (upper estimate: Gemini models wrote the gold SQL) |
+
+**The whole agent** (`eval/run_eval.py`, 37 tasks in `eval/tasks.yaml`, checked without an LLM judge). Both backends ran each task back to back on the same free-tier Gemini planner and executor models; only the model that writes the SQL differs:
+
+| | Gemini writes SQL | Fine-tuned Qwen writes SQL |
+|---|---|---|
+| **Tasks passed** | **34/37 (92%)** | **33/37 (89%)** |
+| sql_only (13) | 11 | 12 |
+| manual_only (6) | 6 | 6 |
+| sql+manual (6) | 5 | 5 |
+| sql+python (5) | 5 | 5 |
+| multi_hop (3) | 3 | 1 |
+| should_refuse (4) | 4 | 4 |
+| Avg tool calls / LLM calls per task | 1.6 / 4.8 | 2.1 / 5.5 |
+| Avg latency | 23 s | 40 s |
+| Gemini calls for SQL | 1 per query | 0 (local) |
+
+Inside the agent, the 1.5B local model is level with Gemini: a 1-task gap on 37 tasks is noise. It writes worse SQL on its own (64% vs 77%), but the planner and executor catch part of that with retries, which is why its runs take more tool calls and longer. Both backends fail the same planted trap: when 5 machines tie for "top 3", they answer with `LIMIT 3` and name only 3. Every failed task was read by hand. Details: [`eval/results/baseline/report.md`](eval/results/baseline/report.md) and the decision log in [docs/design.md](docs/design.md).
+
 ## Setup
 Requires Python ≥ 3.11 and Docker (for `run_python`).
 

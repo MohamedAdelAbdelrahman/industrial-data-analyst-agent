@@ -64,10 +64,11 @@ Every step ends with a commit and push. Tick the box when its "done when" check 
   Done when: the demo questions run from the UI.
   Result: `src/ida/ui/app.py` (chat + live step panel with SQL, manual hits, plots, counters, trace link) and `ida.ui.runtime` (one MCP session on a background loop, shared across reruns); 4 tests in `tests/test_ui.py`. All 5 demo questions run from the browser.
 
-- [ ] **Step 10: Evaluation set and harness** (4 h)
+- [x] **Step 10: Evaluation set and harness** (4 h)
   30–40 tasks in `eval/tasks.yaml` plus `eval/run_eval.py` → `eval/results/<date>.json` and a markdown table. Run 2 configs: `SQL_BACKEND=llm` vs `SQL_BACKEND=finetuned`.
   Done when: the results table is in the README.
   Progress: 37 tasks in `eval/tasks.yaml` (13 sql_only, 6 manual_only, 6 sql+manual, 5 sql+python, 3 multi_hop, 4 should_refuse), with deterministic checks (reference SQL, required strings/numbers, manual section, chart, refusal). `eval/run_eval.py --config both` saves each task as it finishes and continues after a quota stop; `--report` writes `eval/results/<run>/report.md`. 20 checker tests in `tests/test_run_eval.py`.
+  Result: baseline run (`eval/results/baseline/`): `llm` 34/37 (92%), `finetuned` 33/37 (89%), level inside the agent; the fine-tuned backend needs 0 Gemini calls for SQL but takes more tool calls (2.1 vs 1.6) and longer (40 s vs 23 s). All failures read by hand (one reference fixed). Table in the README. Next: prompt changes for ties and name-not-ID answers, measured as a new `--run`.
 
 - [ ] **Step 11: Polish** (2 h)
   README with an architecture diagram, demo GIF, results, design decisions and limitations. Add a CV bullet with real numbers.
