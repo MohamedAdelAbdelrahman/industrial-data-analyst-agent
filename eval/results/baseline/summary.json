@@ -1,0 +1,49 @@
+{
+  "llm": {
+    "passed": 34,
+    "run": 37,
+    "failed": {
+      "sql_top3_critical_tie": {
+        "expect_sql": "missing ['Conveyor-01', 'Hydraulic-Press-01']"
+      },
+      "sql_longest_alarm": {
+        "mention": "missing ['CNC-Mill-01', 'current']",
+        "numbers": "missing [[9.75, 585]]"
+      },
+      "mix_critical_vibration_tie": {
+        "expect_sql": "missing ['CNC-Mill-05', 'Compressor-01', 'Conveyor-01', 'Conveyor-02', 'Hydraulic-Press-01', 'Hydraulic-Press-02', 'Pump-06']"
+      }
+    },
+    "models": {
+      "gemini-3-flash-preview": 12,
+      "gemini-3.1-flash-lite": 27,
+      "gemini-3.5-flash-lite": 135,
+      "gemini-3.6-flash": 4,
+      "gemma-4-26b-a4b-it": 1
+    }
+  },
+  "finetuned": {
+    "passed": 33,
+    "run": 37,
+    "failed": {
+      "sql_top3_critical_tie": {
+        "expect_sql": "missing ['Conveyor-01', 'Hydraulic-Press-01']"
+      },
+      "mix_press_oil_temperature_none": {
+        "mention": "missing [['none', 'no hydraulic press', 'no HIGH_HIGH', 'did not', 'no such', 'zero', 're:(?<![\\\\d.,-])0(?![\\\\d.,])', 'no presses', 'not have any']]"
+      },
+      "hop_cost_vs_average": {
+        "mention": "missing ['Pump-03']"
+      },
+      "hop_alarms_per_machine_type": {
+        "numbers": "missing [8]"
+      }
+    },
+    "models": {
+      "gemini-3-flash-preview": 10,
+      "gemini-3.1-flash-lite": 49,
+      "gemini-3.5-flash-lite": 139,
+      "gemini-3.6-flash": 5
+    }
+  }
+}

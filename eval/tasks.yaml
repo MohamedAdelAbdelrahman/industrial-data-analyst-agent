@@ -221,9 +221,10 @@
 # ---------- multi_hop: a result feeds the next question ----------
 - id: hop_cost_vs_average
   category: multi_hop
+  note: the average is 4724.43 over all 27 machines, or 4906.14 over the 26 with maintenance (Robot-Arm-04 has none); both count
   question: How does the maintenance cost of the machine with the most alarms compare with the average maintenance cost per machine?
   mention: [Pump-03]
-  numbers: [3140.1, 4724.43]
+  numbers: [3140.1, [4724.43, 4906.14]]
 
 - id: hop_alarms_per_machine_type
   category: multi_hop
