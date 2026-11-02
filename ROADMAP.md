@@ -67,7 +67,7 @@ Every step ends with a commit and push. Tick the box when its "done when" check 
 - [ ] **Step 10: Evaluation set and harness** (4 h)
   30–40 tasks in `eval/tasks.yaml` plus `eval/run_eval.py` → `eval/results/<date>.json` and a markdown table. Run 2 configs: `SQL_BACKEND=llm` vs `SQL_BACKEND=finetuned`.
   Done when: the results table is in the README.
-  Progress: 37 tasks in `eval/tasks.yaml` (13 sql_only, 6 manual_only, 6 sql+manual, 5 sql+python, 3 multi_hop, 4 should_refuse), with deterministic checks (reference SQL, required strings/numbers, manual section, chart, refusal). `eval/run_eval.py --config both` saves each task as it finishes and continues after a quota stop; `--report` writes `eval/results/<run>/report.md`. 19 checker tests in `tests/test_run_eval.py`.
+  Progress: 37 tasks in `eval/tasks.yaml` (13 sql_only, 6 manual_only, 6 sql+manual, 5 sql+python, 3 multi_hop, 4 should_refuse), with deterministic checks (reference SQL, required strings/numbers, manual section, chart, refusal). `eval/run_eval.py --config both` saves each task as it finishes and continues after a quota stop; `--report` writes `eval/results/<run>/report.md`. 20 checker tests in `tests/test_run_eval.py`.
 
 - [ ] **Step 11: Polish** (2 h)
   README with an architecture diagram, demo GIF, results, design decisions and limitations. Add a CV bullet with real numbers.

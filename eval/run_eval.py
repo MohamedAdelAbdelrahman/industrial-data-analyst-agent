@@ -34,7 +34,9 @@ CATEGORIES = ("sql_only", "manual_only", "sql+manual", "sql+python", "multi_hop"
 CHECK_KEYS = {"expect_sql", "mention", "numbers", "manual", "chart", "refuse"}
 TASK_KEYS = CHECK_KEYS | {"id", "category", "question", "note", "tol"}
 DEFAULT_TOL = 0.01
-QUOTA_STOP = ("AllModelsUnavailable", "model is blocked")
+MAX_WAIT_S = 900          # wait out per-minute limits and 503 blocks; a longer block (a daily limit) stops the run
+PAUSE_S = 5               # between runs, to stay under the per-minute limits
+MAX_TRIES = 3             # per task and config; a failed run is not saved
 
 
 # ---------- tasks ----------
@@ -203,14 +205,23 @@ async def run_tasks(configs: list[str], run: str, tasks: list[dict], redo: bool)
             graphs[c] = build_graph(default_models(tools), tools)
         for i, (task, config) in enumerate(todo, 1):
             print(f"\n[{i}/{len(todo)} {config}] {task['id']}: {task['question']}", flush=True)
-            row = await run_one(graphs[config], task, config, run)
-            if row["status"] == "error":
-                msg = row["final_answer"]
-                if any(s in msg for s in QUOTA_STOP):
-                    print(f"stopping, the free quota is used up; run the same command again later:\n  {msg[:300]}")
+            for _ in range(MAX_TRIES):
+                wait = pool_wait_s(config)
+                if wait > MAX_WAIT_S:
+                    print(f"stopping: a model pool stays blocked for {wait / 60:.0f} min (daily quota?); "
+                          "run the same command again later")
+                    flush()
+                    return
+                if wait:
+                    print(f"  every model of a pool is blocked, waiting {wait:.0f} s", flush=True)
+                    await asyncio.sleep(wait + 1)
+                row = await run_one(graphs[config], task, config, run)
+                await asyncio.sleep(PAUSE_S)
+                if row["status"] != "error":
                     break
-                print(f"  run failed, not saved (it is tried again next time): {msg[:300]}")
-                continue
+                print(f"  run failed, not saved: {row['final_answer'][:200]}", flush=True)
+            else:
+                continue          # tried again on the next start
             wrong = [b for b in row["sql_backends"] if not b.startswith(config + ":")]
             if wrong:
                 sys.exit(f"query_database used {wrong}, not {config}: check SQL_BACKEND reaches the MCP server")
@@ -220,6 +231,19 @@ async def run_tasks(configs: list[str], run: str, tasks: list[dict], redo: bool)
             print(f"  [{row['status']}] {'PASS' if not failed else 'FAIL ' + json.dumps(failed)[:300]}  "
                   f"({row['tool_calls']} tools, {row['llm_calls']} LLM calls, {row['latency_s']} s)", flush=True)
     flush()
+
+
+def pool_wait_s(config: str) -> float:
+    """Seconds until every pool the run needs has a free model (0 = go now)."""
+    from ida.config import get_settings
+    from ida.model_pool import default_memory
+    st, memory, now = get_settings(), default_memory(), datetime.now().astimezone()
+    pools = [st.planner_models, st.executor_models] + ([st.sql_llm_models] if config == "llm" else [])
+    waits = []
+    for pool in pools:
+        untils = [memory.blocked_until(m) for m in pool]
+        waits.append(0.0 if None in untils else min((u - now).total_seconds() for u in untils))
+    return max(0.0, *waits)
 
 
 # ---------- report ----------

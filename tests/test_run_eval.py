@@ -94,3 +94,18 @@ def test_saved_keeps_the_latest_line(tmp_path, monkeypatch):
     p.parent.mkdir(parents=True)
     p.write_text('{"id": "a", "v": 1}\n{"id": "a", "v": 2}\n', encoding="utf-8")
     assert run_eval.saved("r", "llm")["a"]["v"] == 2
+
+
+def test_pool_wait_needs_every_model_of_a_pool_blocked(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta
+
+    from ida.config import get_settings
+    from ida.model_pool import QuotaMemory
+    monkeypatch.setenv("QUOTA_PATH", str(tmp_path / "quota.json"))
+    memory, soon = QuotaMemory(tmp_path / "quota.json"), datetime.now().astimezone() + timedelta(seconds=90)
+    planners = get_settings().planner_models
+    memory.block(planners[0], soon, "rate limited")
+    assert run_eval.pool_wait_s("finetuned") == 0           # the next planner model is free
+    for m in planners:
+        memory.block(m, soon, "rate limited")
+    assert 80 < run_eval.pool_wait_s("finetuned") <= 90
