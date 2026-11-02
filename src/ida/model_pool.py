@@ -17,6 +17,11 @@ exhausts gemini-3.5-flash, the answerer skips it too. The backoff matters becaus
 2 minutes. One successful call clears the failure count. The MCP server (SQL) and the agent are separate
 processes sharing the file; a lost write in a race only costs one wasted request.
 
+Gemini attaches "thought signatures" to its tool calls, and the API accepts them only from the model that
+made them: Gemma answers 400 to a history that contains one. Falling over in the middle of an executor
+step hands one model's history to another, so the pool removes signatures from AI messages that another
+model wrote (`for_model`); for Gemini 3 the adapter then sends its documented "skip validation" marker.
+
     python -m ida.model_pool            # show today's calls and blocked models
     python -m ida.model_pool --reset    # forget everything
 """
@@ -35,6 +40,7 @@ from langchain_core.exceptions import (
     ModelRateLimitError,
     ModelTimeoutError,
 )
+from langchain_core.messages import AIMessage
 from langchain_core.runnables import Runnable, RunnableConfig
 
 log = logging.getLogger(__name__)
@@ -131,6 +137,39 @@ class QuotaMemory:
         self.path.unlink(missing_ok=True)
 
 
+SIGNATURES_KEY = "__gemini_function_call_thought_signatures__"   # langchain-google-genai's map in additional_kwargs
+SIGNATURE_FIELDS = ("signature", "thought_signature")
+MODEL_BLOCKS = ("thinking", "reasoning")      # another model's thoughts: they carry signatures too
+
+
+def _strip_block(block: Any) -> Any | None:
+    if not isinstance(block, dict):
+        return block
+    if block.get("type") in MODEL_BLOCKS:
+        return None
+    out = {k: v for k, v in block.items() if k not in SIGNATURE_FIELDS}
+    if isinstance(out.get("extras"), dict):
+        out["extras"] = {k: v for k, v in out["extras"].items() if k not in SIGNATURE_FIELDS}
+    return out
+
+
+def for_model(messages: Any, model: str) -> Any:
+    """The input for `model`: thought signatures removed from AI messages that another model wrote."""
+    if not isinstance(messages, list):
+        return messages
+    out = []
+    for m in messages:
+        author = (getattr(m, "response_metadata", None) or {}).get("model_name")
+        if isinstance(m, AIMessage) and author != model:
+            content = m.content
+            if isinstance(content, list):
+                content = [b for b in map(_strip_block, content) if b is not None]
+            kwargs = {k: v for k, v in m.additional_kwargs.items() if k != SIGNATURES_KEY}
+            m = m.model_copy(update={"content": content, "additional_kwargs": kwargs})
+        out.append(m)
+    return out
+
+
 class AllModelsUnavailable(RuntimeError):
     pass
 
@@ -167,7 +206,7 @@ class ModelPool(Runnable):
         last: Exception | None = None
         for name, runnable in self._available():
             try:
-                out = runnable.invoke(input, config, **kwargs)
+                out = runnable.invoke(for_model(input, name), config, **kwargs)
             except Exception as e:  # noqa: BLE001 -- any failure moves on to the next model
                 self._failed(name, e)
                 last = e
@@ -180,7 +219,7 @@ class ModelPool(Runnable):
         last: Exception | None = None
         for name, runnable in self._available():
             try:
-                out = await runnable.ainvoke(input, config, **kwargs)
+                out = await runnable.ainvoke(for_model(input, name), config, **kwargs)
             except Exception as e:  # noqa: BLE001
                 self._failed(name, e)
                 last = e

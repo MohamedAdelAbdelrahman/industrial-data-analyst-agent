@@ -4,13 +4,16 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from langchain_core.exceptions import ModelAPIError, ModelRateLimitError
+from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.runnables import RunnableLambda
 
 from ida.model_pool import (
+    SIGNATURES_KEY,
     AllModelsUnavailable,
     ModelPool,
     QuotaMemory,
     classify,
+    for_model,
     next_daily_reset,
     server_error_cooldown,
 )
@@ -123,3 +126,34 @@ def test_server_errors_back_off_exponentially_until_a_success(memory):
 def test_rate_limits_do_not_add_strikes(memory):
     ModelPool("x", [("a", fails(ModelRateLimitError(MINUTE_429))), ("b", ok("b"))], memory).invoke("q")
     assert memory.strikes("a") == 0
+
+
+def gemini_call(author: str) -> AIMessage:
+    """An AI tool call as langchain-google-genai returns it, with its thought signatures."""
+    return AIMessage(
+        content=[{"type": "text", "text": "checking", "extras": {"signature": "c2ln"}},
+                 {"type": "thinking", "thinking": "...", "signature": "c2ln"}],
+        additional_kwargs={SIGNATURES_KEY: {"call_1": "c2ln"}, "function_call": {"name": "count"}},
+        tool_calls=[{"name": "count", "args": {}, "id": "call_1"}],
+        response_metadata={"model_name": author})
+
+
+def test_for_model_strips_signatures_another_model_wrote():
+    msgs = [HumanMessage("q"), gemini_call("gemini-3.5-flash-lite")]
+    stripped = for_model(msgs, "gemma-4-26b-a4b-it")[1]
+    assert SIGNATURES_KEY not in stripped.additional_kwargs
+    assert stripped.additional_kwargs["function_call"] == {"name": "count"}
+    assert stripped.content == [{"type": "text", "text": "checking", "extras": {}}]
+    assert stripped.tool_calls == msgs[1].tool_calls
+    assert SIGNATURES_KEY in msgs[1].additional_kwargs              # the original is not changed
+    assert for_model(msgs, "gemini-3.5-flash-lite")[1] is msgs[1]   # its own message keeps them
+    assert for_model("plain prompt", "gemma") == "plain prompt"
+
+
+def test_fallback_model_gets_history_without_foreign_signatures(memory):
+    seen = []
+    pool = ModelPool("executor", [("gemini-3.5-flash-lite", fails(ModelAPIError("503 UNAVAILABLE"))),
+                                  ("gemma-4-26b-a4b-it", RunnableLambda(lambda m: seen.append(m) or "ok"))],
+                     memory)
+    assert pool.invoke([HumanMessage("q"), gemini_call("gemini-3.5-flash-lite")]) == "ok"
+    assert SIGNATURES_KEY not in seen[0][1].additional_kwargs
