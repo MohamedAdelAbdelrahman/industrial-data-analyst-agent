@@ -88,8 +88,8 @@
 - id: sql_longest_alarm
   category: sql_only
   question: Which alarm lasted longest from trigger to clear? Give the machine, sensor and duration.
-  mention: [CNC-Mill-01, current]
-  numbers: [[9.75, 585, 35100]]      # hours, minutes or seconds
+  note: 9 h 45 min; any unit counts, also written out ("9 hours and 45 minutes")
+  mention: [CNC-Mill-01, current, ['re:(?<![\d.])9\.75(?!\d)|(?<![\d.])585(?!\d)|35,?100|\b9\s*(h|hours?)\W*(and\s*)?45\s*(m|min|minutes?)\b|\b9:45\b']]
 
 - id: sql_zero_active_compressor01
   category: sql_only

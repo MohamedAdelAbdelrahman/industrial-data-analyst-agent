@@ -1,0 +1,41 @@
+{
+  "llm": {
+    "passed": 36,
+    "run": 37,
+    "failed": {
+      "sql_alarms_per_day_avg": {
+        "numbers": "missing [2.58]"
+      }
+    },
+    "models": {
+      "gemini-3-flash-preview": 3,
+      "gemini-3.1-flash-lite": 76,
+      "gemini-3.5-flash-lite": 109,
+      "gemma-4-26b-a4b-it": 1
+    }
+  },
+  "finetuned": {
+    "passed": 33,
+    "run": 37,
+    "failed": {
+      "mix_critical_vibration_tie": {
+        "expect_sql": "missing ['CNC-Mill-03', 'CNC-Mill-05', 'Compressor-01', 'Conveyor-02', 'Hydraulic-Press-02', 'Pump-06']"
+      },
+      "mix_pump02_active_alarm": {
+        "mention": "missing [['cavitation', 'alignment', 'SP-PMP-BRG-62', 'suction']]",
+        "manual": "no hit for {'machine_type': 'Pump', 'section': '4.3'} in 5 hits"
+      },
+      "py_compressor03_daily_max": {
+        "numbers": "missing [95.75]"
+      },
+      "hop_maintenance_machines_critical": {
+        "numbers": "missing [7]"
+      }
+    },
+    "models": {
+      "gemini-3-flash-preview": 2,
+      "gemini-3.1-flash-lite": 92,
+      "gemini-3.5-flash-lite": 113
+    }
+  }
+}

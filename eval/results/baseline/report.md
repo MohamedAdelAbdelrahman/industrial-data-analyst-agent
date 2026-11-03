@@ -33,7 +33,7 @@ Failed checks per task (`-` = passed, blank = not run):
 | sql_avg_vibration_null_trap | - | - |
 | sql_alarm_driven_maintenance | - | - |
 | sql_alarms_per_day_avg | - | - |
-| sql_longest_alarm | mention, numbers | - |
+| sql_longest_alarm | mention | - |
 | sql_zero_active_compressor01 | - | - |
 | man_pump_gravel_noise | - | - |
 | man_thermostatic_valve | - | - |

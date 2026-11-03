@@ -44,6 +44,17 @@ The project also covers Langfuse tracing, layered guardrails, a Streamlit UI tha
 
 Inside the agent, the 1.5B local model is level with Gemini: a 1-task gap on 37 tasks is noise. It writes worse SQL on its own (64% vs 77%), but the planner and executor catch part of that with retries, which is why its runs take more tool calls and longer. Both backends fail the same planted trap: when 5 machines tie for "top 3", they answer with `LIMIT 3` and name only 3. Every failed task was read by hand. Details: [`eval/results/baseline/report.md`](eval/results/baseline/report.md) and the decision log in [docs/design.md](docs/design.md).
 
+**Prompt changes, measured** (run `prompts_v1`, same 37 tasks). New executor and answerer rules: name machines instead of IDs, ask for full rankings instead of `LIMIT` (ties), and ask for counts from different tables separately (a join inflates them). The SQL prompt did not change, because it is the fine-tuned model's training format.
+
+| | Gemini writes SQL | Fine-tuned Qwen writes SQL |
+|---|---|---|
+| baseline | 34/37 | 33/37 |
+| **prompts_v1** | **36/37** | **33/37** |
+| tasks fixed | 3 (both ties, longest alarm by name) | 4 (top-3 tie, "none" answer, cost comparison, alarms per machine type) |
+| tasks newly failing | 1 (per-day rate over 59 instead of 60 days) | 4 |
+
+The rules help the Gemini backend and leave the fine-tuned one level: it fixes 4 tasks and breaks 4 others. In 2 of the 4 the small model cannot follow the more detailed questions the new rules produce (it invents a `sensor_name` column, and it drops a filter from conditions the executor spelled out). Each task ran once per config, so a 1-2 task change is close to noise. Latency is not compared, because the free-tier models in the pools differed between the runs. Details: [`eval/results/prompts_v1/report.md`](eval/results/prompts_v1/report.md).
+
 ## Setup
 Requires Python ≥ 3.11 and Docker (for `run_python`).
 
