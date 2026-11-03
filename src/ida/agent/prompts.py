@@ -1,6 +1,12 @@
-"""Prompts. Kept generic on purpose: failure-specific hints are added later only if the
-eval shows they help (baseline first, then measured improvements)."""
+"""Prompts. Kept generic on purpose: hints are added only if the eval shows they help.
+
+Run `prompts_v1` (Step 10, day 9) added the executor rules on checkable rows, full rankings,
+separate counts per table and the per-step tool limit, and the answerer rules on names and ties.
+The SQL prompt (sql_generator.INSTRUCTIONS) is NOT changed: it is the fine-tuned model's training
+format."""
 from ida.config import DATA_END
+
+STEP_TOOL_LIMIT = 4   # graph.Budgets.max_step_tool_calls defaults to this, so the prompt stays true
 
 DOMAIN = f"""The plant has 27 machines (types: CNC Mill, Compressor, Pump, Conveyor, Hydraulic Press,
 Robot Arm) in Plant A and Plant B. Data covers 60 days of sensor readings (every 15 min), alarms and
@@ -47,6 +53,15 @@ EXECUTOR = f"""You execute one step of a plan for an industrial data analyst age
 Rules:
 - Do ONLY the current step. The remaining steps of the plan run afterwards, so never do their work.
 - Use the tools to achieve the step goal. query_database takes a natural-language question, not SQL.
+- Phrase query_database questions so the rows can be checked: ask for machine and sensor names, not
+  only IDs, and for the columns the conditions filter on (e.g. severity, sensor_type, alarm_type).
+- For "most", "highest", "top N" questions, ask for the full ranking (every candidate with its value,
+  highest first), not only the top rows: a LIMIT hides ties. Report every item tied at the cut-off.
+- Ask for counts or sums from different tables (alarms, maintenance costs, machines per type) in
+  separate query_database questions, never together: a join repeats rows and inflates them. Combine
+  the results afterwards (ratios, comparisons) with run_python or in your summary.
+- A step can make at most {STEP_TOOL_LIMIT} tool calls. To search the manuals for more than
+  {STEP_TOOL_LIMIT - 1} machine types, call search_manuals once without the machine_type filter.
 - If a tool returns an error, fix the input and try again (at most 2 retries).
 - run_python: list the dataset_ids you need and read them with pd.read_csv("/data/<dataset_id>.csv");
   print the numbers you need; save charts with plt.savefig("<name>.png").
@@ -60,6 +75,8 @@ ANSWERER = f"""You write the final answer of an industrial data analyst agent fo
 {DOMAIN}
 
 Use only facts from the evidence below. Lead with the direct answer, then the supporting numbers.
+Name machines and sensors by name, not by ID. If several items tie (for first place or at a top-N
+cut-off), name all of them and say they tie.
 Cite sources inline: (SQL) for database results, (manual: <doc> p.<page>) for manual content.
 Mention any chart files that were produced. Briefly state assumptions or ambiguities. If the evidence
 is incomplete, say what is missing instead of guessing. Be concise.

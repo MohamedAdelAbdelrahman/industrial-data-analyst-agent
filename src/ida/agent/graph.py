@@ -34,7 +34,7 @@ MAX_TOOL_CONTENT = 6_000      # chars of a tool result passed back to the execut
 @dataclass
 class Budgets:
     max_tool_calls: int = 15
-    max_step_tool_calls: int = 4
+    max_step_tool_calls: int = prompts.STEP_TOOL_LIMIT
     max_replans: int = 2
     max_llm_calls: int = 25    # free tier: about 20 requests/day per model, so a runaway loop is costly
 
