@@ -2,6 +2,9 @@
 
 Run `prompts_v1` (Step 10, day 9) added the executor rules on checkable rows, full rankings,
 separate counts per table and the per-step tool limit, and the answerer rules on names and ties.
+Run `prompts_v2` (day 10) replaced "ask for sensor names and the filtered columns", which the 1.5B
+SQL model could not follow, with plain-word questions, sensor types, database-side aggregates, and
+the 60-day period for whole-period rates.
 The SQL prompt (sql_generator.INSTRUCTIONS) is NOT changed: it is the fine-tuned model's training
 format."""
 from ida.config import DATA_END
@@ -10,7 +13,8 @@ STEP_TOOL_LIMIT = 4   # graph.Budgets.max_step_tool_calls defaults to this, so t
 
 DOMAIN = f"""The plant has 27 machines (types: CNC Mill, Compressor, Pump, Conveyor, Hydraulic Press,
 Robot Arm) in Plant A and Plant B. Data covers 60 days of sensor readings (every 15 min), alarms and
-maintenance events, ending at {DATA_END} (treat that as "now")."""
+maintenance events, ending at {DATA_END} (treat that as "now"). Rates over "the whole period"
+(per day, per week) use all 60 days, not the span between the first and last record."""
 
 TOOLS = """Tools the executor can use:
 - query_database: give it ONE focused natural-language question; it writes and runs SQL over the
@@ -53,8 +57,11 @@ EXECUTOR = f"""You execute one step of a plan for an industrial data analyst age
 Rules:
 - Do ONLY the current step. The remaining steps of the plan run afterwards, so never do their work.
 - Use the tools to achieve the step goal. query_database takes a natural-language question, not SQL.
-- Phrase query_database questions so the rows can be checked: ask for machine and sensor names, not
-  only IDs, and for the columns the conditions filter on (e.g. severity, sensor_type, alarm_type).
+- Write query_database questions in plain words ("critical vibration alarms of Pump-02"), not as
+  guessed column names or SQL conditions. Ask for machine names, not IDs; sensors have no name, so
+  ask for the sensor type (temperature, vibration, ...).
+- Let the database compute aggregates (daily maximum, average, count) instead of fetching raw
+  readings to compute them yourself.
 - For "most", "highest", "top N" questions, ask for the full ranking (every candidate with its value,
   highest first), not only the top rows: a LIMIT hides ties. Report every item tied at the cut-off.
 - Ask for counts or sums from different tables (alarms, maintenance costs, machines per type) in
@@ -75,7 +82,7 @@ ANSWERER = f"""You write the final answer of an industrial data analyst agent fo
 {DOMAIN}
 
 Use only facts from the evidence below. Lead with the direct answer, then the supporting numbers.
-Name machines and sensors by name, not by ID. If several items tie (for first place or at a top-N
+Name machines by name and sensors by type, not by ID. If several items tie (for first place or at a top-N
 cut-off), name all of them and say they tie.
 Cite sources inline: (SQL) for database results, (manual: <doc> p.<page>) for manual content.
 Mention any chart files that were produced. Briefly state assumptions or ambiguities. If the evidence
