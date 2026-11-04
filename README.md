@@ -44,16 +44,18 @@ The project also covers Langfuse tracing, layered guardrails, a Streamlit UI tha
 
 Inside the agent, the 1.5B local model is level with Gemini: a 1-task gap on 37 tasks is noise. It writes worse SQL on its own (64% vs 77%), but the planner and executor catch part of that with retries, which is why its runs take more tool calls and longer. Both backends fail the same planted trap: when 5 machines tie for "top 3", they answer with `LIMIT 3` and name only 3. Every failed task was read by hand. Details: [`eval/results/baseline/report.md`](eval/results/baseline/report.md) and the decision log in [docs/design.md](docs/design.md).
 
-**Prompt changes, measured** (run `prompts_v1`, same 37 tasks). New executor and answerer rules: name machines instead of IDs, ask for full rankings instead of `LIMIT` (ties), and ask for counts from different tables separately (a join inflates them). The SQL prompt did not change, because it is the fine-tuned model's training format.
+**Prompt changes, measured** (same 37 tasks, each change as a new run against the baseline). The SQL prompt never changed, because it is the fine-tuned model's training format; only the planner, executor and answerer prompts did.
 
 | | Gemini writes SQL | Fine-tuned Qwen writes SQL |
 |---|---|---|
 | baseline | 34/37 | 33/37 |
-| **prompts_v1** | **36/37** | **33/37** |
-| tasks fixed | 3 (both ties, longest alarm by name) | 4 (top-3 tie, "none" answer, cost comparison, alarms per machine type) |
-| tasks newly failing | 1 (per-day rate over 59 instead of 60 days) | 4 |
+| `prompts_v1`: names not IDs, full rankings instead of `LIMIT` (ties), separate questions per table | 36/37 | 33/37 (4 fixed, 4 broken) |
+| **`prompts_v2`**: plain-word questions, sensor types, aggregates in the database, 60-day rates | **36/37** | **35/37** |
+| avg latency in v2 | 19 s | 19 s |
 
-The rules help the Gemini backend and leave the fine-tuned one level: it fixes 4 tasks and breaks 4 others. In 2 of the 4 the small model cannot follow the more detailed questions the new rules produce (it invents a `sensor_name` column, and it drops a filter from conditions the executor spelled out). Each task ran once per config, so a 1-2 task change is close to noise. Latency is not compared, because the free-tier models in the pools differed between the runs. Details: [`eval/results/prompts_v1/report.md`](eval/results/prompts_v1/report.md).
+v1 helped the Gemini backend but not the fine-tuned one: its more detailed questions ("ask for sensor names and the filtered columns") made the 1.5B model invent a `sensor_name` column and drop filters. v2 asks in plain words instead, and the fine-tuned backend fixed all 4 of those. Both ties are now answered in full on both backends.
+
+Still failing in v2: both backends answer "which presses had a HIGH_HIGH oil-temperature alarm" (true answer: none) with presses whose HIGH_HIGH alarms were on other sensors, after the exact query correctly returned no rows; and the fine-tuned model once dropped the machine column from a per-pump query, so the chart step ran out of tool calls. Each task ran once per config, so a 1-2 task difference is close to noise. Reports: [`baseline`](eval/results/baseline/report.md), [`prompts_v1`](eval/results/prompts_v1/report.md), [`prompts_v2`](eval/results/prompts_v2/report.md).
 
 ## Setup
 Requires Python ≥ 3.11 and Docker (for `run_python`).

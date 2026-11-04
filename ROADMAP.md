@@ -69,7 +69,7 @@ Every step ends with a commit and push. Tick the box when its "done when" check 
   Done when: the results table is in the README.
   Progress: 37 tasks in `eval/tasks.yaml` (13 sql_only, 6 manual_only, 6 sql+manual, 5 sql+python, 3 multi_hop, 4 should_refuse), with deterministic checks (reference SQL, required strings/numbers, manual section, chart, refusal). `eval/run_eval.py --config both` saves each task as it finishes and continues after a quota stop; `--report` writes `eval/results/<run>/report.md`. 20 checker tests in `tests/test_run_eval.py`.
   Result: baseline run (`eval/results/baseline/`): `llm` 34/37 (92%), `finetuned` 33/37 (89%), level inside the agent; the fine-tuned backend needs 0 Gemini calls for SQL but takes more tool calls (2.1 vs 1.6) and longer (40 s vs 23 s). All failures read by hand (one reference fixed). Table in the README. Next: prompt changes for ties and name-not-ID answers, measured as a new `--run`.
-  Prompt changes (`eval/results/prompts_v1/`): `llm` 34 → 36/37, `finetuned` 33 → 33/37 (4 fixed, 4 newly failing, read by hand). Next: `prompts_v2` (sensor_type instead of sensor names, conditions in plain words, aggregates in the database, the 60-day period).
+  Prompt changes (`eval/results/prompts_v1/`): `llm` 34 → 36/37, `finetuned` 33 → 33/37 (4 fixed, 4 newly failing, read by hand). `prompts_v2` (plain-word questions, sensor types, aggregates in the database, 60-day rates): `llm` 36/37, `finetuned` 35/37; the 3 remaining failures are read by hand and listed as known limitations in docs/design.md.
 
 - [ ] **Step 11: Polish** (2 h)
   README with an architecture diagram, demo GIF, results, design decisions and limitations. Add a CV bullet with real numbers.
