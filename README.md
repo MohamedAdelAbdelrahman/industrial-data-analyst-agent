@@ -116,30 +116,47 @@ Each of these came from a failure seen while building; the [decision log](docs/d
 - The training pairs were written with Gemini, whose terms limit developing competing models, so the dataset and the trained model are not published.
 
 ## Setup
-Requires Python ≥ 3.11 and Docker (for `run_python`).
+Requires Python ≥ 3.11, a free [Google AI Studio](https://aistudio.google.com) API key, and Docker (only for `run_python`).
 
 ```bash
 py -3.12 -m venv .venv            # or: python3.12 -m venv .venv
 .venv\Scripts\activate            # Linux/macOS: source .venv/bin/activate
 pip install -e ".[all]"           # extras: rag, sandbox, obs, ui, dev
-pytest
+copy .env.example .env            # Linux/macOS: cp; then set GOOGLE_API_KEY (Langfuse keys optional)
+
+# build once
+python data/generate_db.py --out data/sensors.db   # sensor database (seed 42, 60 days)
+python -m ida.mcp_server.manuals_index              # manual search index
+python -m ida.mcp_server.sandbox --build            # run_python Docker image
+pytest                                              # unit tests, no API calls
+```
+
+**Fine-tuned SQL backend (optional).** Train with `finetune/train_colab.ipynb` on a free Colab T4, put the exported `Qwen2.5-Coder-1.5B-Instruct.Q4_K_M.gguf` in `finetune/model/`, then:
+
+```bash
+ollama create ida-sql -f finetune/Modelfile
+# in .env: SQL_BACKEND=finetuned   (the MCP server reads .env, a shell variable does not reach it)
 ```
 
 ## Try it
 ```bash
+streamlit run src/ida/ui/app.py                              # chat UI with live agent steps
 python -m ida.agent.run "Which pump had the most critical alarms and what does the manual say?"
 python -m ida.agent.run --demo                              # 5 sample questions, step by step
-streamlit run src/ida/ui/app.py                              # chat UI with live agent steps
-python data/generate_db.py --out data/sensors.db            # build the DB once
-python -m ida.mcp_server.manuals_index                       # build the manual search index once
-python -m ida.mcp_server.sandbox --build                     # build the run_python Docker image once
 python scripts/try_mcp_tools.py                              # start MCP server, call both tools
 python scripts/try_mcp_tools.py sql "Average spindle temperature per CNC mill last week"
 python scripts/try_mcp_tools.py manuals "pump cavitation noise" Pump
 python scripts/try_mcp_tools.py chain                        # SQL -> dataset -> sandboxed plot
-python eval/eval_retrieval.py                                # retrieval recall@k / MRR
-pytest            # unit tests (no API calls)
-pytest --live     # also runs tests that call the LLM
+python -m ida.model_pool                                     # Gemini quota status per model
+```
+
+## Evaluate
+```bash
+python eval/eval_retrieval.py                                # manual search recall@k / MRR
+python eval/eval_sql.py                                      # Text-to-SQL execution accuracy
+python eval/run_eval.py --config both --run my_run           # 37 agent tasks, both SQL backends
+python eval/run_eval.py --run my_run --report                # score again -> eval/results/my_run/report.md
+pytest --live                                                # also runs tests that call the LLM
 ```
 
 ## Data
@@ -166,5 +183,6 @@ src/ida/
 finetune/        Colab QLoRA notebook, Ollama Modelfile, data (private)
 sandbox/         Dockerfile for run_python
 eval/            tasks.yaml, harnesses, results per run
-tests/           207 unit tests (no API calls); --live for LLM tests
+tests/           207 unit tests (no API calls, run on every push); --live for LLM tests
+.github/         CI: ruff + pytest
 ```
