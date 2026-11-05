@@ -13,28 +13,32 @@ An agent that answers questions about an industrial machine fleet (27 machines, 
 
 ```mermaid
 flowchart LR
-    U([Question]) --> IG[input_guard]
-    IG -- blocked --> X([Refusal])
-    IG --> P[planner]
-    P -- off-topic --> X
-    P --> E[executor]
-    E -- tool call --> T[(MCP tools)]
+    U(["Question"]) --> IG["input_guard"]
+    IG -->|blocked| X(["Refusal"])
+    IG --> P["planner"]
+    P -->|off-topic| X
+    P --> E["executor"]
+    E -->|tool call| T["MCP tools"]
     T --> E
-    E --> SC[step_check]
-    SC -- next step --> E
-    SC -- step failed --> R[replanner]
+    E --> SC["step_check"]
+    SC -->|next step| E
+    SC -->|step failed| R["replanner"]
     R --> E
-    SC -- done / budget hit --> A[answerer]
+    SC -->|done or budget hit| A["answerer"]
     R --> A
-    A --> OG[output_guard] --> F([Answer + evidence])
+    A --> OG["output_guard"]
+    OG --> F(["Answer with evidence"])
 
-    subgraph MCP["MCP server (own, FastMCP)"]
-        Q[query_database<br/>NL → SQL → validate → read-only SQLite]
-        S[search_manuals<br/>PDF pages → bge-small → Chroma]
-        Y[run_python<br/>Docker: no network, 512 MB, non-root]
+    subgraph MCP ["Own MCP server"]
+        Q["query_database: question to SQL, validated, read-only SQLite"]
+        S["search_manuals: PDF pages, bge-small, Chroma"]
+        Y["run_python: Docker, no network, 512 MB, non-root"]
     end
-    T --- MCP
-    Q -. SQL_BACKEND .- G[Gemini] & O[Fine-tuned Qwen 1.5B<br/>Ollama, 4-bit GGUF]
+    T --> Q
+    T --> S
+    T --> Y
+    Q -.->|SQL_BACKEND=llm| G["Gemini"]
+    Q -.->|SQL_BACKEND=finetuned| O["Fine-tuned Qwen 1.5B, Ollama, 4-bit GGUF"]
 ```
 
 - **Agent**: LangGraph planner/executor with a replanner and budgets (15 tool calls, 4 per step, 2 replans, 25 LLM calls). The executor works one plan step at a time.
