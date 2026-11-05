@@ -1,16 +1,49 @@
 # Industrial Data Analyst Agent
 
-A LangGraph planner/executor agent that answers questions about an industrial machine fleet. It uses tools served by its own **MCP server**:
+An agent that answers questions about an industrial machine fleet (27 machines, 60 days of sensor readings, alarms and maintenance) by combining **SQL over a sensor database**, **search over machine manuals** and **Python analysis in a sandbox**. The SQL can come from a **1.5B model I fine-tuned** (QLoRA, served locally by Ollama) or from Gemini; a 37-task eval shows both reach the same success rate inside the agent.
 
-| Tool | What it does |
-|---|---|
-| `query_database` | Natural language → **fine-tuned Text-to-SQL model** → validated, read-only SQL on a SQLite sensor DB |
-| `search_manuals` | Retrieval over machine-manual PDFs (page-level citations) |
-| `run_python` | Analysis and plots in a Docker sandbox (no network, resource limits, timeout) |
+**Headline numbers**
+- Fine-tuning Qwen2.5-Coder-1.5B raised Text-to-SQL execution accuracy from **28.7% to 64.3%** on 129 held-out questions (Gemini flash-lite: 76.7%).
+- The full agent passes **36/37** eval tasks with Gemini writing the SQL and **35/37** with the fine-tuned local model, after two measured rounds of prompt changes (baseline 34 and 33).
+- Built for **$0**: free-tier Gemini with per-role model pools and a quota memory, a free Colab T4 for training, and local inference.
 
-The project also covers Langfuse tracing, layered guardrails, a Streamlit UI that shows each agent step, and an evaluation set of 30–40 tasks that measures success rate, steps and cost.
+<!-- Demo GIF: docs/demo.gif (Streamlit UI answering a SQL + manual + plot question) -->
 
-> 🚧 Work in progress. See [ROADMAP.md](ROADMAP.md) for progress and [docs/design.md](docs/design.md) for the architecture.
+## Architecture
+
+```mermaid
+flowchart LR
+    U([Question]) --> IG[input_guard]
+    IG -- blocked --> X([Refusal])
+    IG --> P[planner]
+    P -- off-topic --> X
+    P --> E[executor]
+    E -- tool call --> T[(MCP tools)]
+    T --> E
+    E --> SC[step_check]
+    SC -- next step --> E
+    SC -- step failed --> R[replanner]
+    R --> E
+    SC -- done / budget hit --> A[answerer]
+    R --> A
+    A --> OG[output_guard] --> F([Answer + evidence])
+
+    subgraph MCP["MCP server (own, FastMCP)"]
+        Q[query_database<br/>NL → SQL → validate → read-only SQLite]
+        S[search_manuals<br/>PDF pages → bge-small → Chroma]
+        Y[run_python<br/>Docker: no network, 512 MB, non-root]
+    end
+    T --- MCP
+    Q -. SQL_BACKEND .- G[Gemini] & O[Fine-tuned Qwen 1.5B<br/>Ollama, 4-bit GGUF]
+```
+
+- **Agent**: LangGraph planner/executor with a replanner and budgets (15 tool calls, 4 per step, 2 replans, 25 LLM calls). The executor works one plan step at a time.
+- **Tools**: one MCP server the agent reaches through `langchain-mcp-adapters`. `query_database` takes natural language, not SQL, so the fine-tuned model does the SQL work. Large query results stay on the server as datasets that `run_python` mounts read-only, so they never pass through the LLM context.
+- **Guardrails**: an input guard that blocks write and injection requests with 0 LLM calls, an SQL AST allow-list on a read-only connection, every tool result wrapped as `<untrusted_data>`, the Docker sandbox, and an output guard that flags numbers not found in any tool result.
+- **Observability**: Langfuse traces each question with nested spans for nodes, LLM calls (tokens, cost) and tool calls.
+- **UI**: Streamlit chat that streams each agent step, the SQL, manual citations and plots.
+
+Full interfaces and the decision log: [docs/design.md](docs/design.md).
 
 ## Example questions
 - "Which compressor had the most critical alarms in September, and what does the manual recommend for that alarm?"
@@ -26,6 +59,8 @@ The project also covers Langfuse tracing, layered guardrails, a Streamlit UI tha
 | Qwen2.5-Coder-1.5B, base | 28.7% |
 | Qwen2.5-Coder-1.5B, QLoRA fine-tuned (served by Ollama, 4-bit GGUF) | 64.3% |
 | gemini-3.1-flash-lite | 76.7% (upper estimate: Gemini models wrote the gold SQL) |
+
+**Manual search** (`eval/eval_retrieval.py`, 17 queries): recall@1 0.88, recall@3 0.94, MRR 0.91.
 
 **The whole agent** (`eval/run_eval.py`, 37 tasks in `eval/tasks.yaml`, checked without an LLM judge). Both backends ran each task back to back on the same free-tier Gemini planner and executor models; only the model that writes the SQL differs:
 
@@ -56,6 +91,23 @@ Inside the agent, the 1.5B local model is level with Gemini: a 1-task gap on 37 
 v1 helped the Gemini backend but not the fine-tuned one: its more detailed questions ("ask for sensor names and the filtered columns") made the 1.5B model invent a `sensor_name` column and drop filters. v2 asks in plain words instead, and the fine-tuned backend fixed all 4 of those. Both ties are now answered in full on both backends.
 
 Still failing in v2: both backends answer "which presses had a HIGH_HIGH oil-temperature alarm" (true answer: none) with presses whose HIGH_HIGH alarms were on other sensors, after the exact query correctly returned no rows; and the fine-tuned model once dropped the machine column from a per-pump query, so the chart step ran out of tool calls. Each task ran once per config, so a 1-2 task difference is close to noise. Reports: [`baseline`](eval/results/baseline/report.md), [`prompts_v1`](eval/results/prompts_v1/report.md), [`prompts_v2`](eval/results/prompts_v2/report.md).
+
+## Design decisions
+Each of these came from a failure seen while building; the [decision log](docs/design.md#6-decision-log-findings-while-building) has the details.
+
+- **Training data checked by execution, then by reading results.** Gemini wrote about 1,500 question/SQL pairs; each one had to run and return a non-trivial result. A hand review then found that `ORDER BY ... LIMIT 1` hides ties, which no SQL reading catches, so the checker reruns each query to detect ties, mixed units (ranking rpm against °C) and bare columns beside `MAX()`.
+- **No leakage between train and test.** The split hashes the SQL shape, and a fingerprint of tables, literals and result rows removed 9 test questions that repeated a training query with the joins in another order.
+- **Deterministic eval, no LLM judge.** Each task has a reference SQL, a number, required manual pages or "must refuse". Both SQL backends run each task back to back so they see the same rotated Gemini models. Every failure is read by hand before it is reported.
+- **Prompt changes measured, not assumed.** A rule that helped Gemini ("ask for sensor names and the filtered columns") broke 4 tasks for the 1.5B model, which invented a `sensor_name` column. For a weak SQL model, the executor has to ask simpler questions, not more precise ones. The SQL prompt never changed, because it is the fine-tuned model's training format.
+- **Free tier as a design constraint.** Per-role model pools with a file-based quota memory skip models until their reset time and back off exponentially on server errors, so a run moves to the next model instead of failing.
+
+## Limitations
+- The data and manuals are synthetic, and Gemini models wrote the gold SQL, so Gemini's 76.7% is an upper estimate.
+- 37 tasks, each run once per config: a difference of 1-2 tasks is noise.
+- When the exact query correctly returns no rows, the agent can widen it and report the wider rows as matches (the HIGH_HIGH oil-temperature task fails this way on both backends).
+- `output_guard` catches invented numbers, not wrongly summarised ones or wrong claims.
+- The fine-tuned model's remaining SQL errors are mostly invented column names; it is weak on window functions, thresholds and time windows.
+- The training pairs were written with Gemini, whose terms limit developing competing models, so the dataset and the trained model are not published.
 
 ## Setup
 Requires Python ≥ 3.11 and Docker (for `run_python`).
@@ -96,14 +148,17 @@ The manuals are synthetic. Their alarm thresholds come from the same profiles as
 
 The question→SQL pairs in `finetune/data/` were written by Gemini and checked by execution. They are for private learning: the terms of the Gemini API limit using it to develop competing models, so this dataset and any model trained on it are not published.
 
-## Layout (target)
+## Layout
 ```
-data/            schema, DB generator, manuals
+data/            schema, DB generator, manual builder, manual PDFs
 src/ida/
-  mcp_server/    FastMCP server + tools
-  agent/         LangGraph graph, prompts, guardrails
+  mcp_server/    FastMCP server, query_database / search_manuals / run_python
+  agent/         LangGraph graph, prompts, guardrails, tracing, CLI
   ui/            Streamlit app
+  model_pool.py  per-role Gemini pools with quota memory
+  training_data.py  question/SQL pair generation, checks, split
+finetune/        Colab QLoRA notebook, Ollama Modelfile, data (private)
 sandbox/         Dockerfile for run_python
-eval/            tasks.yaml, harness, results
-tests/
+eval/            tasks.yaml, harnesses, results per run
+tests/           207 unit tests (no API calls); --live for LLM tests
 ```
