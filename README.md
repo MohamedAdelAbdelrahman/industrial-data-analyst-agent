@@ -7,7 +7,9 @@ An agent that answers questions about an industrial machine fleet (27 machines, 
 - The full agent passes **36/37** eval tasks with Gemini writing the SQL and **35/37** with the fine-tuned local model, after two measured rounds of prompt changes (baseline 34 and 33).
 - Built for **$0**: free-tier Gemini with per-role model pools and a quota memory, a free Colab T4 for training, and local inference.
 
-<!-- Demo GIF: docs/demo.gif (Streamlit UI answering a SQL + manual + plot question) -->
+![Demo: the Streamlit UI answers a question with SQL and a manual search, and shows the plan, tool calls and SQL](docs/demo.gif)
+
+*Recorded live on the free Gemini tier (26 s; slower runs happen when a model is busy and the pool switches models).*
 
 ## Architecture
 

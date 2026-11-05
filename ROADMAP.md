@@ -71,7 +71,8 @@ Every step ends with a commit and push. Tick the box when its "done when" check 
   Result: baseline run (`eval/results/baseline/`): `llm` 34/37 (92%), `finetuned` 33/37 (89%), level inside the agent; the fine-tuned backend needs 0 Gemini calls for SQL but takes more tool calls (2.1 vs 1.6) and longer (40 s vs 23 s). All failures read by hand (one reference fixed). Table in the README. Next: prompt changes for ties and name-not-ID answers, measured as a new `--run`.
   Prompt changes (`eval/results/prompts_v1/`): `llm` 34 → 36/37, `finetuned` 33 → 33/37 (4 fixed, 4 newly failing, read by hand). `prompts_v2` (plain-word questions, sensor types, aggregates in the database, 60-day rates): `llm` 36/37, `finetuned` 35/37; the 3 remaining failures are read by hand and listed as known limitations in docs/design.md.
 
-- [ ] **Step 11: Polish** (2 h)
+- [x] **Step 11: Polish** (2 h)
   README with an architecture diagram, demo GIF, results, design decisions and limitations. Add a CV bullet with real numbers.
+  Result: done. README has the headline numbers, a Mermaid diagram, design decisions, limitations and `docs/demo.gif`; the CV bullet is kept outside the repo.
 
 **Total ≈ 37 h** (about 7 h over budget because of 6b). If time runs short, cut these first: output_guard's number check, then shrink the eval set to 30 tasks, then reduce the fine-tuning data to 800 pairs.
