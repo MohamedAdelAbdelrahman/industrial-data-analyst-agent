@@ -12,5 +12,5 @@ eval/results/*.raw.json
 .pytest_cache/
 .ruff_cache/
 data/cache/
-finetune/data/rejected.jsonl
 finetune/model/
+finetune/data/*.jsonl

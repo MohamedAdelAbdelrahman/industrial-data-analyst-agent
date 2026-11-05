@@ -169,7 +169,7 @@ python data/build_manuals.py      # -> data/manuals/*.pdf (committed)
 
 The manuals are synthetic. Their alarm thresholds come from the same profiles as the database, and they include troubleshooting tables, alarm-response procedures, maintenance intervals and part numbers.
 
-The question→SQL pairs in `finetune/data/` were written by Gemini and checked by execution. They are for private learning: the terms of the Gemini API limit using it to develop competing models, so this dataset and any model trained on it are not published.
+The question→SQL pairs were written by Gemini and checked by execution. They are **not included in this repository**: the terms of the Gemini API limit using it to develop competing models, so the dataset and the model trained on it stay private. The pipeline that builds them is included; see [`finetune/data/README.md`](finetune/data/README.md).
 
 ## Layout
 ```
