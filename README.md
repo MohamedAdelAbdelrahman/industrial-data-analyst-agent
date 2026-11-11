@@ -115,7 +115,20 @@ Each of these came from a failure seen while building; the [decision log](docs/d
 - The fine-tuned model's remaining SQL errors are mostly invented column names; it is weak on window functions, thresholds and time windows.
 - The training pairs were written with Gemini, whose terms limit developing competing models, so the dataset and the trained model are not published.
 
-## Setup
+## Run with Docker
+Needs Docker (Desktop) and a free [Google AI Studio](https://aistudio.google.com) API key.
+
+```bash
+cp .env.example .env              # Windows: copy; set GOOGLE_API_KEY (Langfuse keys optional)
+docker compose up --build         # first start: builds images, the database and the manual index
+```
+
+Open http://localhost:8501. Data, the search index and the quota memory live in the `ida-data` volume, so later starts are fast; `docker compose down -v` deletes them.
+
+- **Fine-tuned SQL model**: put the GGUF in `finetune/model/` (see below), set `SQL_BACKEND=finetuned` in `.env`, then `docker compose --profile finetuned up`. This adds an Ollama container and registers the model as `ida-sql`. That container runs the model on CPU (about 45 s per SQL query in a 4 GB Docker VM). An Ollama that already runs on the host with a GPU is much faster (about 1 s): set `DOCKER_OLLAMA_URL=http://host.docker.internal:11434` in `.env` and start without the profile.
+- **`run_python` in Compose**: the app container gets the host's Docker socket so it can start a fresh sandbox container per run. The sandbox still has no network, no socket, a read-only root and 512 MB. Because the Docker daemon resolves mount paths on the host, the run folders sit on the named volume `ida-sandbox-work`, and each sandbox mounts only its own subfolder ([sandbox.py](src/ida/mcp_server/sandbox.py)).
+
+## Setup (local Python)
 Requires Python ≥ 3.11, a free [Google AI Studio](https://aistudio.google.com) API key, and Docker (only for `run_python`).
 
 ```bash

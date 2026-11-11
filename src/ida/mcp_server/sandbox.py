@@ -6,6 +6,13 @@ Every run gets a fresh container:
 Mounts: code (ro) at /code, requested datasets (ro) at /data/<id>.csv, and /out (rw, cwd)
 from which *.png files are collected.
 
+Where the run folders live:
+  - default (agent runs on the host): a temp dir, bind-mounted by its host path.
+  - SANDBOX_VOLUME set (agent runs in a container, see docker-compose.yml): the Docker daemon
+    resolves bind paths on the HOST, so paths inside the agent container mean nothing to it.
+    The run folders are then created under SANDBOX_WORK_DIR, which is a named volume, and each
+    sandbox mounts only its own run's subfolders of that volume (volume subpath, Docker API >= 1.45).
+
 Build the image:
     python -m ida.mcp_server.sandbox --build
 """
@@ -42,9 +49,16 @@ def _truncate(text: str) -> str:
 
 
 class PythonSandbox:
-    def __init__(self, artifacts_dir: Path, limits: SandboxLimits | None = None):
+    def __init__(self, artifacts_dir: Path, limits: SandboxLimits | None = None,
+                 work_dir: Path | None = None, volume: str | None = None):
+        """work_dir: where run folders are created (None: system temp).
+        volume: name of the Docker volume mounted at work_dir, when the agent itself runs in a container."""
+        if volume and not work_dir:
+            raise ValueError("a sandbox volume needs the work_dir it is mounted at")
         self.artifacts_dir = artifacts_dir
         self.limits = limits or SandboxLimits()
+        self.work_dir = work_dir
+        self.volume = volume
         self.client = docker.from_env()
 
     def image_exists(self) -> bool:
@@ -57,21 +71,37 @@ class PythonSandbox:
     def build_image(self) -> None:
         self.client.images.build(path=str(ROOT / "sandbox"), tag=IMAGE, rm=True)
 
+    def _mount(self, work: Path, sub: str, target: str, read_only: bool) -> docker.types.Mount:
+        """Mount the run folder work/sub at target: a host bind, or a subpath of the shared volume."""
+        if not self.volume:
+            return docker.types.Mount(target, str(work / sub), type="bind", read_only=read_only)
+        mount = docker.types.Mount(target, self.volume, type="volume", read_only=read_only)
+        mount["VolumeOptions"] = {"Subpath": (work / sub).relative_to(self.work_dir).as_posix()}
+        return mount
+
     def run(self, code: str, datasets: dict[str, Path] | None = None, timeout_s: float = 20) -> dict:
-        """datasets maps dataset_id -> host CSV path. Returns stdout/stderr/exit_code/images."""
+        """datasets maps dataset_id -> CSV path. Returns stdout/stderr/exit_code/images."""
         run_id = uuid.uuid4().hex[:12]
-        work = Path(tempfile.mkdtemp(prefix=f"ida_run_{run_id}_"))
+        if self.work_dir:
+            self.work_dir.mkdir(parents=True, exist_ok=True)
+        work = Path(tempfile.mkdtemp(prefix=f"ida_run_{run_id}_", dir=self.work_dir))
         try:
-            (work / "code").mkdir()
-            (work / "out").mkdir()
+            for sub in ("code", "data", "out"):
+                (work / sub).mkdir()
             (work / "code" / "main.py").write_text(code, encoding="utf-8")
-            volumes = {str(work / "code"): {"bind": "/code", "mode": "ro"},
-                       str(work / "out"): {"bind": "/out", "mode": "rw"}}
+            # datasets are copied into the run folder, so one directory mount covers them all
             for ds_id, path in (datasets or {}).items():
-                volumes[str(path.resolve())] = {"bind": f"/data/{ds_id}.csv", "mode": "ro"}
+                shutil.copyfile(path, work / "data" / f"{ds_id}.csv")
+            # the sandbox runs as uid 1000; on Linux the folders above belong to whoever runs the
+            # agent (root in the compose container), and mkdtemp makes them private (0700)
+            work.chmod(0o755)
+            (work / "out").chmod(0o777)
+            mounts = [self._mount(work, "code", "/code", read_only=True),
+                      self._mount(work, "data", "/data", read_only=True),
+                      self._mount(work, "out", "/out", read_only=False)]
 
             container = self.client.containers.run(
-                IMAGE, detach=True, volumes=volumes,
+                IMAGE, detach=True, mounts=mounts,
                 network_mode="none", read_only=True,
                 tmpfs={"/tmp": f"size={self.limits.tmpfs_size},mode=1777"},
                 mem_limit=self.limits.memory, memswap_limit=self.limits.memory,

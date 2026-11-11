@@ -37,6 +37,8 @@ class Settings:
         "SQL_LLM_MODELS", "gemini-3.1-flash-lite,gemini-3.5-flash-lite,gemma-4-31b-it"))
     finetuned_sql_model: str = field(default_factory=lambda: _env("FINETUNED_SQL_MODEL", "ida-sql"))
     ollama_url: str = field(default_factory=lambda: _env("OLLAMA_URL", "http://localhost:11434"))
+    # seconds per SQL request; Ollama on CPU in a container needs ~45 s for the long schema prompt
+    ollama_timeout_s: float = field(default_factory=lambda: float(_env("OLLAMA_TIMEOUT_S", "60")))
 
     db_path: Path = field(default_factory=lambda: Path(_env("DB_PATH", str(ROOT / "data" / "sensors.db"))))
     schema_path: Path = ROOT / "data" / "schema.sql"
@@ -44,6 +46,10 @@ class Settings:
     artifacts_dir: Path = field(default_factory=lambda: Path(_env("ARTIFACTS_DIR", str(ROOT / "data" / "cache" / "artifacts"))))
     manuals_dir: Path = ROOT / "data" / "manuals"
     index_dir: Path = field(default_factory=lambda: Path(_env("INDEX_DIR", str(ROOT / "data" / "index"))))
+    # run_python inside docker compose: run folders on a named volume (see mcp_server/sandbox.py)
+    sandbox_work_dir: Path | None = field(
+        default_factory=lambda: Path(os.environ["SANDBOX_WORK_DIR"]) if os.environ.get("SANDBOX_WORK_DIR") else None)
+    sandbox_volume: str | None = field(default_factory=lambda: os.environ.get("SANDBOX_VOLUME") or None)
 
     query_timeout_s: float = 10.0
     max_cached_rows: int = 10_000     # rows written to the dataset CSV for run_python

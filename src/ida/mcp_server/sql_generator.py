@@ -68,9 +68,10 @@ class OllamaSQLGenerator:
         self.schema = load_schema(str(settings.schema_path))
         self.model = settings.finetuned_sql_model
         self.url = settings.ollama_url.rstrip("/") + "/api/generate"
+        self.timeout_s = settings.ollama_timeout_s
 
     def generate(self, question: str) -> str:
-        r = httpx.post(self.url, timeout=60, json={
+        r = httpx.post(self.url, timeout=self.timeout_s, json={
             "model": self.model, "prompt": build_prompt(self.schema, question),
             "stream": False, "raw": False, "options": {"temperature": 0}})
         r.raise_for_status()
