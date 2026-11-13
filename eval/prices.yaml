@@ -1,0 +1,14 @@
+# Gemini API paid tier ("Standard"), USD per 1M text tokens; output includes thinking tokens.
+# The project runs on the FREE tier and costs $0: these prices show what the same runs would cost
+# on the paid tier. run_eval.py --report / --compare read this file.
+source: https://ai.google.dev/gemini-api/docs/pricing
+checked: 2026-11-13
+models:
+  gemini-3.6-flash: {input: 0.75, output: 3.75}        # requests to gemini-3.5-flash answer as gemini-3.6-flash; price until 2026-12-31, doubles from 2027-01-01
+  gemini-3.5-flash: {input: 0.75, output: 3.75}        # same model, in case the response keeps the requested name
+  gemini-3.5-flash-lite: {input: 0.30, output: 2.50}
+  gemini-3.1-flash-lite: {input: 0.25, output: 1.50}
+  gemini-3-flash-preview: {input: 0.50, output: 3.00}
+  gemma-4-26b-a4b-it: {input: 0, output: 0}            # Gemma 4 is free tier only ("Not available" on paid)
+  gemma-4-31b-it: {input: 0, output: 0}
+free_prefixes: ["ollama:"]                             # the fine-tuned SQL model runs locally

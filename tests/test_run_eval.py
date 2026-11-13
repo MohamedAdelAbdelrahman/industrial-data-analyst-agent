@@ -140,3 +140,43 @@ def test_compare_lists_the_tasks_that_differ(tmp_path, monkeypatch):
     assert "| **passed** | 0/1 (0%) | 1/1 (100%) |" in md
     assert "- `ref_off_topic`: a refuse; b -" in md
     assert (tmp_path / "compare_a_vs_b.md").exists()
+
+
+PRICES = {"models": {"a": {"input": 1.0, "output": 10.0}}, "free_prefixes": ["ollama:"], "checked": "x"}
+
+
+def q_event(usage, recorded=True):
+    out = {"rows": [], "error": None}
+    if recorded:
+        out["sql_usage"] = usage
+    return {"name": "query_database", "args": {}, "output": out}
+
+
+def test_cost_adds_agent_and_sql_tokens():
+    result = {"usage": {"a": {"input": 1_000_000, "output": 100_000, "calls": 2}},
+              "tool_log": [q_event({"model": "a", "input": 500_000, "output": 0}),
+                           q_event({"model": "ollama:ida-sql", "input": 9_999, "output": 99})]}
+    acc = run_eval.accounting(result, PRICES)
+    assert acc["agent_tokens"] == 1_100_000 and acc["sql_tokens"] == 500_000 + 10_098
+    assert acc["cost_usd"] == pytest.approx(1.0 + 1.0 + 0.5)        # local model is free
+    assert acc["unpriced"] == []
+
+
+def test_runs_without_sql_usage_are_marked_not_recorded():
+    old = {"usage": {"b": {"input": 10, "output": 1, "calls": 1}}, "tool_log": [q_event(None, recorded=False)]}
+    acc = run_eval.accounting(old, PRICES)
+    assert acc["sql_tokens"] is None and acc["unpriced"] == ["b"] and acc["cost_usd"] == 0
+    # a failed generator call (usage None) still counts as recorded
+    assert run_eval.accounting({"usage": {}, "tool_log": [q_event(None)]}, PRICES)["sql_tokens"] == 0
+
+
+def test_price_file_covers_the_default_pools():
+    from ida.config import get_settings
+    prices, s = run_eval.load_prices(), get_settings()
+    assert set(s.planner_models + s.executor_models + s.sql_llm_models) <= set(prices["models"])
+
+
+def test_unrecorded_local_sql_still_gives_a_complete_cost():
+    old = {"usage": {}, "tool_log": [q_event(None, recorded=False)]}
+    assert run_eval.accounting(old | {"sql_backends": ["finetuned:ida-sql"]}, PRICES)["cost_complete"]
+    assert not run_eval.accounting(old | {"sql_backends": ["llm:a"]}, PRICES)["cost_complete"]

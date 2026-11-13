@@ -76,3 +76,14 @@ def test_output_guard_checks_the_answer():
     graph, _, _ = make(Scripted(call("query_database", question="a"), AIMessage(content="There were 42 alarms.")))
     out = run(graph)
     assert "_Check:" in out["final_answer"] and out["guard_flags"]
+
+
+def test_sql_usage_stays_in_the_log_not_in_the_prompt():
+    out_with_usage = {"sql": "SELECT 1", "rows": [[3]], "row_count": 1, "error": None,
+                      "sql_usage": {"model": "m", "input": 900, "output": 40}}
+    agent = Scripted(call("query_database", question="a"), AIMessage(content="3 (SQL)."))
+    graph = build_single_graph(SingleModels(agent=agent, answerer=Scripted()),
+                               [FakeTool("query_database", out_with_usage)])
+    out = run(graph)
+    assert out["tool_log"][0]["output"]["sql_usage"]["input"] == 900
+    assert "sql_usage" not in agent.calls[1][-1].content

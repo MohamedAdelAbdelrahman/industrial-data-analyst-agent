@@ -14,10 +14,14 @@
 | partial (a budget ended the run) | 0 | 0 |
 | avg tool calls | 1.7 | 1.8 |
 | avg LLM calls | 4.8 | 2.5 |
-| avg tokens | 7,223.0 | 6,221.9 |
+| avg agent tokens | 7,223.0 | 6,221.9 |
 | avg latency (s) | 19.2 | 21.0 |
+| avg SQL-model tokens | not recorded | not recorded |
+| avg cost per task | $0.0038 (agent only) | $0.0036 (agent only) |
 | LLM calls per model | gemini-3.5-flash-lite 115, gemini-3.1-flash-lite 44, gemini-3-flash-preview 11, gemini-3.6-flash 9 | gemini-3.5-flash-lite 56, gemini-3-flash-preview 19, gemini-3.6-flash 17 |
 
 Tasks with different results (failed checks, `-` = passed):
 
 - `mix_press_oil_temperature_none`: prompts_v2 mention; single_v2 -
+
+Cost: what the run would cost at Gemini paid-tier prices (`eval/prices.yaml`, checked 2026-11-13); the project itself runs on the free tier for $0. The fine-tuned SQL model runs locally and costs nothing. "agent only" / `*`: the run was saved before `query_database` reported the SQL model's tokens (`?`), so Gemini's SQL calls are missing from the cost.

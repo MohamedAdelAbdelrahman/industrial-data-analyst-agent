@@ -19,7 +19,9 @@
       "gemini-3.5-flash-lite": 135,
       "gemini-3.6-flash": 4,
       "gemma-4-26b-a4b-it": 1
-    }
+    },
+    "cost_usd": 0.1206,
+    "sql_tokens_recorded": false
   },
   "finetuned": {
     "passed": 33,
@@ -43,6 +45,8 @@
       "gemini-3.1-flash-lite": 49,
       "gemini-3.5-flash-lite": 139,
       "gemini-3.6-flash": 5
-    }
+    },
+    "cost_usd": 0.1312,
+    "sql_tokens_recorded": false
   }
 }

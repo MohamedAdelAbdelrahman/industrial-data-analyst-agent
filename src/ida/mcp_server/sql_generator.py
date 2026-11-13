@@ -37,6 +37,7 @@ def extract_sql(text: str) -> str:
 
 class SQLGenerator(Protocol):
     name: str
+    last_usage: dict | None     # {"model", "input", "output"} of the last generate() call, for cost accounting
 
     def generate(self, question: str) -> str: ...
 
@@ -53,10 +54,16 @@ class LLMSQLGenerator:
         self.name = f"llm:{settings.sql_llm_models[0]}"
         self.schema = load_schema(str(settings.schema_path))
         self.model = model_pool("sql", settings.sql_llm_models)
+        self.last_usage = None
 
     def generate(self, question: str) -> str:
+        self.last_usage = None
         msg = self.model.invoke(build_prompt(self.schema, question))
-        self.name = f"llm:{msg.response_metadata.get('model_name', self.name.split(':', 1)[1])}"   # who answered
+        model = msg.response_metadata.get("model_name", self.name.split(":", 1)[1])   # who answered
+        self.name = f"llm:{model}"
+        meta = msg.usage_metadata or {}
+        self.last_usage = {"model": model, "input": meta.get("input_tokens", 0),
+                           "output": meta.get("output_tokens", 0)}
         return extract_sql(msg.text)
 
 
@@ -69,13 +76,18 @@ class OllamaSQLGenerator:
         self.model = settings.finetuned_sql_model
         self.url = settings.ollama_url.rstrip("/") + "/api/generate"
         self.timeout_s = settings.ollama_timeout_s
+        self.last_usage = None
 
     def generate(self, question: str) -> str:
+        self.last_usage = None
         r = httpx.post(self.url, timeout=self.timeout_s, json={
             "model": self.model, "prompt": build_prompt(self.schema, question),
             "stream": False, "raw": False, "options": {"temperature": 0}})
         r.raise_for_status()
-        return extract_sql(r.json()["response"])
+        body = r.json()
+        self.last_usage = {"model": f"ollama:{self.model}", "input": body.get("prompt_eval_count", 0),
+                           "output": body.get("eval_count", 0)}
+        return extract_sql(body["response"])
 
 
 def make_generator(settings: Settings | None = None) -> SQLGenerator:

@@ -29,6 +29,7 @@ from ida.agent.guards import injection_flags, input_guard, output_guard, wrap_un
 from ida.agent.state import AgentState, Plan, StepRecord, ToolEvent
 
 MAX_TOOL_CONTENT = 6_000      # chars of a tool result passed back to the executor
+LOG_ONLY = {"sql_usage"}     # tool output kept in the tool log for accounting, not shown to the LLM
 
 
 @dataclass
@@ -143,7 +144,7 @@ async def call_tools(tools_by_name: dict[str, BaseTool], state: AgentState, step
             msg = await tool.ainvoke({"type": "tool_call", "id": call["id"],
                                       "name": call["name"], "args": call["args"]})
             output = tool_output(msg)
-            content = json.dumps(output, default=str)
+            content = json.dumps({k: v for k, v in output.items() if k not in LOG_ONLY}, default=str)
         if len(content) > MAX_TOOL_CONTENT:
             content = content[:MAX_TOOL_CONTENT] + "... [truncated]"
         flags += [f"step {step_id} {call['name']}: {f}" for f in injection_flags(content)]

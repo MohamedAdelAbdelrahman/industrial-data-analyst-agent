@@ -30,6 +30,7 @@ import yaml
 
 EVAL_DIR = Path(__file__).resolve().parent
 TASKS = EVAL_DIR / "tasks.yaml"
+PRICES = EVAL_DIR / "prices.yaml"
 RESULTS = EVAL_DIR / "results"
 CONFIGS = ("llm", "finetuned")
 ARCHS = ("planner", "single")     # ida.agent.graph (planner/executor) or ida.agent.single
@@ -272,8 +273,75 @@ def score_run(run: str, tasks: list[dict]) -> dict[str, list[dict]]:
                 r = rows[t["id"]]
                 checks = check(t, r, db_path())
                 scored[config].append({**r, "checks": checks, "passed": not any(checks.values()),
-                                       "sql_hit": sql_hit(t, r, db_path())})
+                                       "sql_hit": sql_hit(t, r, db_path()), **accounting(r)})
     return scored
+
+
+# ---------- tokens and cost ----------
+
+def load_prices(path: Path = PRICES) -> dict:
+    return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
+def sql_usage(result: dict) -> dict[str, dict] | None:
+    """Tokens of the SQL-writing model inside the MCP server, per model. None when a query_database call
+    has no record (runs saved before the tool reported its usage)."""
+    calls = [e for e in result.get("tool_log", []) if e["name"] == "query_database"]
+    if any("sql_usage" not in e["output"] for e in calls):
+        return None
+    out: dict[str, dict] = {}
+    for e in calls:
+        u = e["output"]["sql_usage"]
+        if u:          # None: the generator failed before it answered
+            prev = out.get(u["model"], {"input": 0, "output": 0, "calls": 0})
+            out[u["model"]] = {"input": prev["input"] + u["input"], "output": prev["output"] + u["output"],
+                               "calls": prev["calls"] + 1}
+    return out
+
+
+def cost_usd(usage: dict[str, dict], prices: dict) -> tuple[float, set[str]]:
+    """Paid-tier cost of the tokens in `usage`, and the models with no price (counted as 0)."""
+    total, unknown = 0.0, set()
+    for model, u in usage.items():
+        if any(model.startswith(p) for p in prices.get("free_prefixes", [])):
+            continue
+        price = prices["models"].get(model)
+        if price is None:
+            unknown.add(model)
+            continue
+        total += (u["input"] * price["input"] + u["output"] * price["output"]) / 1e6
+    return total, unknown
+
+
+def accounting(result: dict, prices: dict | None = None) -> dict:
+    """agent_tokens / sql_tokens (None = not recorded) / cost_usd (agent + SQL) / unpriced models.
+    cost_complete is False when Gemini wrote SQL whose tokens were not recorded (local SQL is free anyway)."""
+    prices = prices or load_prices()
+    sql = sql_usage(result)
+    agent_cost, unknown = cost_usd(result.get("usage", {}), prices)
+    sql_cost, sql_unknown = cost_usd(sql or {}, prices)
+    return {"agent_tokens": sum(u["input"] + u["output"] for u in result.get("usage", {}).values()),
+            "sql_tokens": None if sql is None else sum(u["input"] + u["output"] for u in sql.values()),
+            "cost_usd": agent_cost + sql_cost, "unpriced": sorted(unknown | sql_unknown),
+            "cost_complete": sql is not None or all(b.startswith("finetuned:") for b in result.get("sql_backends", []))}
+
+
+def _avg_sql_tokens(rs: list[dict]) -> str:
+    if any(r["sql_tokens"] is None for r in rs):
+        return "not recorded"
+    return f"{sum(r['sql_tokens'] for r in rs) / len(rs):,.0f}"
+
+
+def _avg_cost(rs: list[dict]) -> str:
+    agent_only = "" if all(r["cost_complete"] for r in rs) else " (agent only)"
+    return f"${sum(r['cost_usd'] for r in rs) / len(rs):.4f}{agent_only}"
+
+
+def _cost_note(prices: dict) -> str:
+    return (f"Cost: what the run would cost at Gemini paid-tier prices (`eval/prices.yaml`, checked "
+            f"{prices['checked']}); the project itself runs on the free tier for $0. The fine-tuned SQL model "
+            "runs locally and costs nothing. \"agent only\" / `*`: the run was saved before `query_database` "
+            "reported the SQL model's tokens (`?`), so Gemini's SQL calls are missing from the cost.")
 
 
 def _pct(n: int, d: int) -> str:
@@ -299,20 +367,32 @@ def report(run: str, tasks: list[dict]) -> str:
     row("reference rows found by a query", lambda rs: _pct(
         sum(r["sql_hit"] is True for r in rs), sum(r["sql_hit"] is not None for r in rs)))
     for label, key in (("avg tool calls", "tool_calls"), ("avg LLM calls", "llm_calls"),
-                       ("avg tokens", "tokens"), ("avg latency (s)", "latency_s")):
+                       ("avg agent tokens", "agent_tokens"), ("avg latency (s)", "latency_s")):
         row(label, lambda rs, key=key: f"{sum(r[key] for r in rs) / len(rs):,.1f}" if rs else "-")
-    lines += ["", "LLM calls are the agent's own calls (planner, executor and answerer, or the single agent). "
-              "Under `llm` every query_database call is one more Gemini call inside the MCP server; under "
-              "`finetuned` it runs locally in Ollama."]
-    lines += ["", "Failed checks per task (`-` = passed, blank = not run):", "",
-              "| task | " + " | ".join(CONFIGS) + " |", "|---|" + "---|" * len(CONFIGS)]
+    row("avg SQL-model tokens", lambda rs: _avg_sql_tokens(rs) if rs else "-")
+    row("avg cost per task", lambda rs: _avg_cost(rs) if rs else "-")
+    row("total cost", lambda rs: f"${sum(r['cost_usd'] for r in rs):.3f}" if rs else "-")
+    prices = load_prices()
+    unpriced = sorted({m for rs in scored.values() for r in rs for m in r["unpriced"]})
+    lines += ["", "LLM calls and agent tokens are the agent's own calls (planner, executor and answerer, or the "
+              "single agent). Under `llm` every query_database call is one more Gemini call inside the MCP "
+              "server (SQL-model tokens); under `finetuned` it runs locally in Ollama.", "", _cost_note(prices)]
+    if unpriced:
+        lines += ["", f"No price in `eval/prices.yaml` (counted as $0): {', '.join(unpriced)}."]
+    lines += ["", "Per task: failed checks (`-` = passed, blank = not run), tokens (agent + SQL model) and cost:", "",
+              "| task | " + " | ".join(f"{c} | tokens | cost" for c in CONFIGS) + " |",
+              "|---|" + "---|---:|---:|" * len(CONFIGS)]
     by_id = {c: {r["id"]: r for r in scored[c]} for c in CONFIGS}
     for t in tasks:
         cells = []
         for c in CONFIGS:
             r = by_id[c].get(t["id"])
-            cells.append("" if r is None else "-" if r["passed"] else
-                         ", ".join(k for k, v in r["checks"].items() if v))
+            if r is None:
+                cells += ["", "", ""]
+                continue
+            sql = "?" if r["sql_tokens"] is None else f"{r['sql_tokens']:,}"
+            cost = f"${r['cost_usd']:.4f}" + ("" if r["cost_complete"] else "*")
+            cells += [_failed_checks(r), f"{r['agent_tokens']:,} + {sql}", cost]
         lines.append(f"| {t['id']} | " + " | ".join(cells) + " |")
     md = "\n".join(lines) + "\n"
     out = RESULTS / run
@@ -322,7 +402,9 @@ def report(run: str, tasks: list[dict]) -> str:
                    "failed": {r["id"]: {k: v for k, v in r["checks"].items() if v}
                               for r in scored[c] if not r["passed"]},
                    "models": dict(sum((Counter({m: u["calls"]}) for r in scored[c]
-                                       for m, u in r["usage"].items()), Counter()))}
+                                       for m, u in r["usage"].items()), Counter())),
+                   "cost_usd": round(sum(r["cost_usd"] for r in scored[c]), 4),
+                   "sql_tokens_recorded": all(r["sql_tokens"] is not None for r in scored[c])}
                for c in CONFIGS}
     (out / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     return md
@@ -347,8 +429,10 @@ def _compare_config(config: str, runs: dict[str, list[dict]]) -> list[str]:
                                           sum(r["category"] == cat for r in rs)))
     row("partial (a budget ended the run)", lambda rs: str(sum(r["status"] == "partial" for r in rs)))
     for label, key in (("avg tool calls", "tool_calls"), ("avg LLM calls", "llm_calls"),
-                       ("avg tokens", "tokens"), ("avg latency (s)", "latency_s")):
+                       ("avg agent tokens", "agent_tokens"), ("avg latency (s)", "latency_s")):
         row(label, lambda rs, key=key: f"{sum(r[key] for r in rs) / len(rs):,.1f}")
+    row("avg SQL-model tokens", _avg_sql_tokens)
+    row("avg cost per task", _avg_cost)
     row("LLM calls per model", lambda rs: ", ".join(
         f"{m} {n}" for m, n in sum((Counter({m: u["calls"]}) for r in rs for m, u in r["usage"].items()),
                                    Counter()).most_common()))
@@ -367,6 +451,7 @@ def compare(run_a: str, run_b: str, tasks: list[dict]) -> str:
     for config in CONFIGS:
         if a[config] and b[config]:
             lines += _compare_config(config, {run_a: a[config], run_b: b[config]})
+    lines += ["", _cost_note(load_prices())]
     md = "\n".join(lines) + "\n"
     (RESULTS / f"compare_{run_a}_vs_{run_b}.md").write_text(md, encoding="utf-8")
     return md
