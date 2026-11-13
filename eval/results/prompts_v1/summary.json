@@ -1,10 +1,13 @@
 {
   "llm": {
-    "passed": 36,
+    "passed": 35,
     "run": 37,
     "failed": {
       "sql_alarms_per_day_avg": {
         "numbers": "missing [2.58]"
+      },
+      "py_compressor03_daily_max": {
+        "numbers": "missing [95.75]"
       }
     },
     "models": {

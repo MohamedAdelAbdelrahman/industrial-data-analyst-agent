@@ -1,0 +1,22 @@
+{
+  "llm": {
+    "passed": 37,
+    "run": 37,
+    "failed": {},
+    "models": {
+      "gemini-3.6-flash": 15,
+      "gemini-3-flash-preview": 11,
+      "gemini-3.5-flash-lite": 69
+    },
+    "cost_usd": 0.1434,
+    "sql_tokens_recorded": true
+  },
+  "finetuned": {
+    "passed": 0,
+    "run": 0,
+    "failed": {},
+    "models": {},
+    "cost_usd": 0,
+    "sql_tokens_recorded": true
+  }
+}

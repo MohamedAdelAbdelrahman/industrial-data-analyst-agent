@@ -1,10 +1,13 @@
 {
   "llm": {
-    "passed": 36,
+    "passed": 35,
     "run": 37,
     "failed": {
       "mix_press_oil_temperature_none": {
         "mention": "missing [['none', 'no hydraulic press', 'no HIGH_HIGH', 'did not', 'no such', 'zero', 're:(?<![\\\\d.,-])0(?![\\\\d.,])', 'no presses', 'not have any']]"
+      },
+      "py_compressor03_daily_max": {
+        "numbers": "missing [95.75]"
       }
     },
     "models": {
@@ -17,11 +20,14 @@
     "sql_tokens_recorded": false
   },
   "finetuned": {
-    "passed": 35,
+    "passed": 34,
     "run": 37,
     "failed": {
       "mix_press_oil_temperature_none": {
         "mention": "missing [['none', 'no hydraulic press', 'no HIGH_HIGH', 'did not', 'no such', 'zero', 're:(?<![\\\\d.,-])0(?![\\\\d.,])', 'no presses', 'not have any']]"
+      },
+      "py_compressor03_daily_max": {
+        "numbers": "missing [95.75]"
       },
       "py_pump_flow_chart": {
         "chart": "no chart"

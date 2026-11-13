@@ -3,11 +3,11 @@ Run `baseline` (planner agent), 37 tasks (`eval/tasks.yaml`).
 | | `SQL_BACKEND=llm` | `SQL_BACKEND=finetuned` |
 |---|---|---|
 | tasks run | 37 of 37 | 37 of 37 |
-| **passed** | 34/37 (92%) | 33/37 (89%) |
+| **passed** | 33/37 (89%) | 32/37 (86%) |
 | sql_only (13) | 11/13 (85%) | 12/13 (92%) |
 | manual_only (6) | 6/6 (100%) | 6/6 (100%) |
 | sql+manual (6) | 5/6 (83%) | 5/6 (83%) |
-| sql+python (5) | 5/5 (100%) | 5/5 (100%) |
+| sql+python (5) | 4/5 (80%) | 4/5 (80%) |
 | multi_hop (3) | 3/3 (100%) | 1/3 (33%) |
 | should_refuse (4) | 4/4 (100%) | 4/4 (100%) |
 | reference rows found by a query | 7/9 (78%) | 8/9 (89%) |
@@ -52,7 +52,7 @@ Per task: failed checks (`-` = passed, blank = not run), tokens (agent + SQL mod
 | mix_pump02_active_alarm | - | 7,968 + ? | $0.0035* | - | 25,463 + ? | $0.0090 |
 | mix_cnc02_active_temperature | - | 18,214 + ? | $0.0080* | - | 10,200 + ? | $0.0048 |
 | mix_press_oil_temperature_none | - | 34,475 + ? | $0.0124* | mention | 28,454 + ? | $0.0102 |
-| py_compressor03_daily_max | - | 12,104 + ? | $0.0047* | - | 11,979 + ? | $0.0045 |
+| py_compressor03_daily_max | numbers | 12,104 + ? | $0.0047* | numbers | 11,979 + ? | $0.0045 |
 | py_pump02_p95 | - | 8,032 + ? | $0.0029* | - | 6,420 + ? | $0.0026 |
 | py_alarms_per_day_plot | - | 9,283 + ? | $0.0045* | - | 7,451 + ? | $0.0033 |
 | py_pump_flow_chart | - | 9,812 + ? | $0.0046* | - | 21,100 + ? | $0.0083 |

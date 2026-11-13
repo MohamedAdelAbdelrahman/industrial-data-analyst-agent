@@ -4,8 +4,8 @@ An agent that answers questions about an industrial machine fleet (27 machines, 
 
 **Headline numbers**
 - Fine-tuning Qwen2.5-Coder-1.5B raised Text-to-SQL execution accuracy from **28.7% to 64.3%** on 129 held-out questions (Gemini flash-lite: 76.7%).
-- The full agent passes **36/37** eval tasks with Gemini writing the SQL and **35/37** with the fine-tuned local model, after two measured rounds of prompt changes (baseline 34 and 33).
-- A **single tool-calling agent** (no plan) also passes **37/37** with about half the LLM calls (2.5 vs 4.8 per task), so on these tasks the planner/executor split does not pay for itself in accuracy.
+- The full agent passes **35/37** eval tasks with Gemini writing the SQL and **34/37** with the fine-tuned local model, after two measured rounds of prompt changes (baseline 33 and 32).
+- In a same-day, task-by-task comparison, a **single tool-calling agent** (no plan) passes **37/37** against 36/37 for planner/executor, with half the LLM calls, half the median latency (3.9 s vs 8.0 s) and 11% lower cost ($0.0039 vs $0.0044 per task at paid-tier prices).
 - Built for **$0**: free-tier Gemini with per-role model pools and a quota memory, a free Colab T4 for training, and local inference.
 
 ![Demo: the Streamlit UI answers a question with SQL and a manual search, and shows the plan, tool calls and SQL](docs/demo.gif)
@@ -73,43 +73,44 @@ Full interfaces and the decision log: [docs/design.md](docs/design.md).
 
 | | Gemini writes SQL | Fine-tuned Qwen writes SQL |
 |---|---|---|
-| **Tasks passed** | **34/37 (92%)** | **33/37 (89%)** |
+| **Tasks passed** | **33/37 (89%)** | **32/37 (86%)** |
 | sql_only (13) | 11 | 12 |
 | manual_only (6) | 6 | 6 |
 | sql+manual (6) | 5 | 5 |
-| sql+python (5) | 5 | 5 |
+| sql+python (5) | 4 | 4 |
 | multi_hop (3) | 3 | 1 |
 | should_refuse (4) | 4 | 4 |
 | Avg tool calls / LLM calls per task | 1.6 / 4.8 | 2.1 / 5.5 |
 | Avg latency | 23 s | 40 s |
 | Gemini calls for SQL | 1 per query | 0 (local) |
 
-Inside the agent, the 1.5B local model is level with Gemini: a 1-task gap on 37 tasks is noise. It writes worse SQL on its own (64% vs 77%), but the planner and executor catch part of that with retries, which is why its runs take more tool calls and longer. Both backends fail the same planted trap: when 5 machines tie for "top 3", they answer with `LIMIT 3` and name only 3. Every failed task was read by hand. Details: [`eval/results/baseline/report.md`](eval/results/baseline/report.md) and the decision log in [docs/design.md](docs/design.md).
+Inside the agent, the 1.5B local model is level with Gemini: a 1-task gap on 37 tasks is noise. It writes worse SQL on its own (64% vs 77%), but the planner and executor catch part of that with retries, which is why its runs take more tool calls and longer. Both backends fail the same planted trap: when 5 machines tie for "top 3", they answer with `LIMIT 3` and name only 3. Every failed task was read by hand. (These numbers are one task lower than first reported: a stricter check on the Compressor-03 daily-maximum task, explained below, turned a false pass into a fail on both backends.) Details: [`eval/results/baseline/report.md`](eval/results/baseline/report.md) and the decision log in [docs/design.md](docs/design.md).
 
 **Prompt changes, measured** (same 37 tasks, each change as a new run against the baseline). The SQL prompt never changed, because it is the fine-tuned model's training format; only the planner, executor and answerer prompts did.
 
 | | Gemini writes SQL | Fine-tuned Qwen writes SQL |
 |---|---|---|
-| baseline | 34/37 | 33/37 |
-| `prompts_v1`: names not IDs, full rankings instead of `LIMIT` (ties), separate questions per table | 36/37 | 33/37 (4 fixed, 4 broken) |
-| **`prompts_v2`**: plain-word questions, sensor types, aggregates in the database, 60-day rates | **36/37** | **35/37** |
+| baseline | 33/37 | 32/37 |
+| `prompts_v1`: names not IDs, full rankings instead of `LIMIT` (ties), separate questions per table | 35/37 | 33/37 (4 fixed, 3 broken) |
+| **`prompts_v2`**: plain-word questions, sensor types, aggregates in the database, 60-day rates | **35/37** | **34/37** |
 | avg latency in v2 | 19 s | 19 s |
 
-v1 helped the Gemini backend but not the fine-tuned one: its more detailed questions ("ask for sensor names and the filtered columns") made the 1.5B model invent a `sensor_name` column and drop filters. v2 asks in plain words instead, and the fine-tuned backend fixed all 4 of those. Both ties are now answered in full on both backends.
+v1 helped the Gemini backend but not the fine-tuned one: its more detailed questions ("ask for sensor names and the filtered columns") made the 1.5B model invent a `sensor_name` column and drop filters. v2 asks in plain words instead, and the fine-tuned backend fixed all 3 of those. Both ties are now answered in full on both backends.
 
-Still failing in v2: both backends answer "which presses had a HIGH_HIGH oil-temperature alarm" (true answer: none) with presses whose HIGH_HIGH alarms were on other sensors, after the exact query correctly returned no rows; and the fine-tuned model once dropped the machine column from a per-pump query, so the chart step ran out of tool calls. Each task ran once per config, so a 1-2 task difference is close to noise. Reports: [`baseline`](eval/results/baseline/report.md), [`prompts_v1`](eval/results/prompts_v1/report.md), [`prompts_v2`](eval/results/prompts_v2/report.md).
+Still failing in v2: both backends report the wrong peak for "plot the daily maximum discharge temperature of Compressor-03" (95.10 °C instead of 95.75): the query returns all 60 days, but the answerer's evidence shows only the first 20 rows of each result and the peak is on day 37. The default 1% number tolerance let 95.10 pass until a hand check found it, so this task now uses 0.1%. Both backends also answer "which presses had a HIGH_HIGH oil-temperature alarm" (true answer: none) with presses whose HIGH_HIGH alarms were on other sensors, after the exact query correctly returned no rows; and the fine-tuned model once dropped the machine column from a per-pump query, so the chart step ran out of tool calls. Each task ran once per config, so a 1-2 task difference is close to noise. Reports: [`baseline`](eval/results/baseline/report.md), [`prompts_v1`](eval/results/prompts_v1/report.md), [`prompts_v2`](eval/results/prompts_v2/report.md).
 
-**Single agent vs planner/executor** (`--arch single`, run `single_v2`, Gemini writes the SQL). The single agent is one model from the planner pool with all three tools in a ReAct loop: same tools, guards, budgets and query/answer rules, but no plan, no separate executor and no separate answerer.
+**Single agent vs planner/executor** (`--arch both`, run `arch_v3`, Gemini writes the SQL). The single agent is one model from the planner pool with all three tools in a ReAct loop: same tools, guards, budgets and query/answer rules, but no plan, no separate executor and no separate answerer. Both graphs ran each task back to back on the same day, so both saw the same free-tier models. Cost is what the same tokens would cost at Gemini paid-tier prices (`eval/prices.yaml`); the project itself runs for $0.
 
-| | planner/executor (`prompts_v2`) | single agent (`single_v2`) |
+| | planner/executor | single agent |
 |---|---|---|
 | **Tasks passed** | **36/37** | **37/37** |
-| Avg LLM calls per task | 4.8 | 2.5 |
-| Avg tool calls per task | 1.7 | 1.8 |
-| Avg tokens per task | 7,223 | 6,222 |
-| Median latency | 11.2 s | 5.2 s |
+| Avg LLM calls per task | 5.1 | 2.6 |
+| Avg tool calls per task | 1.9 | 1.9 |
+| Avg tokens per task (agent + SQL model) | 9,383 | 7,421 |
+| Median latency | 8.0 s | 3.9 s |
+| Avg cost per task | $0.0044 | $0.0039 |
 
-The one task that differs is the HIGH_HIGH oil-temperature trap: the single agent answers "none" and the planner run reported presses with alarms on other sensors. Every single-agent answer was read by hand; none passed by accident. Most tasks need 1-3 tool calls, and for those a separate plan, executor and answerer only add LLM calls. Caveats: the two runs were 9 days apart and used different free-tier models (the single agent's tool loop ran on planner-pool models, while the planner run's executor was mostly the cheaper flash-lite), each task ran once, and a 1-task gap is noise. What the split still gives: a plan the UI can show, per-step budgets and replanning, and a cheap model for the tool loop. Side by side: [`compare_prompts_v2_vs_single_v2.md`](eval/results/compare_prompts_v2_vs_single_v2.md).
+The one task that differs is the Compressor-03 daily maximum: the planner's answerer sees only the first 20 rows of a query result and misses the peak on day 37; the single agent works with up to 50 rows and computed the maximum in Python. Every answer of both runs was read by hand. Most tasks need 1-3 tool calls, and for those a separate plan, executor and answerer double the LLM calls. The cost gap is much smaller than the call gap, though: the planner's executor runs on the cheap flash-lite, while every single-agent turn runs on the planner pool's stronger, pricier models. What the split still gives: a plan the UI can show, per-step budgets and replanning, and a cheap model for the tool loop. Each task ran once, so a 1-task gap is noise. Side by side, with per-model call counts: [`compare_arch_v3_planner_vs_arch_v3_single.md`](eval/results/compare_arch_v3_planner_vs_arch_v3_single.md); the first, not interleaved comparison (9 days apart): [`compare_prompts_v2_vs_single_v2.md`](eval/results/compare_prompts_v2_vs_single_v2.md).
 
 ## Design decisions
 Each of these came from a failure seen while building; the [decision log](docs/design.md#6-decision-log-findings-while-building) has the details.
@@ -123,7 +124,8 @@ Each of these came from a failure seen while building; the [decision log](docs/d
 ## Limitations
 - The data and manuals are synthetic, and Gemini models wrote the gold SQL, so Gemini's 76.7% is an upper estimate.
 - 37 tasks, each run once per config: a difference of 1-2 tasks is noise.
-- The single-agent comparison ran on another day than the planner run, with a different free-tier model mix; a same-day run of both and harder multi-step tasks would make it firmer.
+- The architecture comparison ran each task once on 37 mostly short tasks (1-3 tool calls); harder multi-step tasks are where a plan could pay off, and they are not in the set.
+- The planner's answerer sees only the first 20 rows of each query result, so a peak or total outside them is missed unless the executor computed it (the Compressor-03 daily maximum fails this way).
 - When the exact query correctly returns no rows, the agent can widen it and report the wider rows as matches (the HIGH_HIGH oil-temperature task fails this way on both backends).
 - `output_guard` catches invented numbers, not wrongly summarised ones or wrong claims.
 - The fine-tuned model's remaining SQL errors are mostly invented column names; it is weak on window functions, thresholds and time windows.
@@ -182,7 +184,7 @@ python -m ida.model_pool                                     # Gemini quota stat
 python eval/eval_retrieval.py                                # manual search recall@k / MRR
 python eval/eval_sql.py                                      # Text-to-SQL execution accuracy
 python eval/run_eval.py --config both --run my_run           # 37 agent tasks, both SQL backends
-python eval/run_eval.py --run my_run --report                # score again -> eval/results/my_run/report.md
+python eval/run_eval.py --arch both --config llm --run my_arch    # planner and single agent, task by task -> my_arch_planner, my_arch_single
 python eval/run_eval.py --arch single --config llm --run my_single   # single agent instead of planner/executor
 python eval/run_eval.py --compare my_run my_single           # side by side -> eval/results/compare_*.md
 pytest --live                                                # also runs tests that call the LLM

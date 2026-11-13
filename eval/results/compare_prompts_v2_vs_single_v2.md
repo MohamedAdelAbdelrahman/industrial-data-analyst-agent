@@ -4,11 +4,11 @@
 
 | | `prompts_v2` (planner) | `single_v2` (single) |
 |---|---|---|
-| **passed** | 36/37 (97%) | 37/37 (100%) |
+| **passed** | 35/37 (95%) | 37/37 (100%) |
 | sql_only | 13/13 (100%) | 13/13 (100%) |
 | manual_only | 6/6 (100%) | 6/6 (100%) |
 | sql+manual | 5/6 (83%) | 6/6 (100%) |
-| sql+python | 5/5 (100%) | 5/5 (100%) |
+| sql+python | 4/5 (80%) | 5/5 (100%) |
 | multi_hop | 3/3 (100%) | 3/3 (100%) |
 | should_refuse | 4/4 (100%) | 4/4 (100%) |
 | partial (a budget ended the run) | 0 | 0 |
@@ -23,5 +23,6 @@
 Tasks with different results (failed checks, `-` = passed):
 
 - `mix_press_oil_temperature_none`: prompts_v2 mention; single_v2 -
+- `py_compressor03_daily_max`: prompts_v2 numbers; single_v2 -
 
 Cost: what the run would cost at Gemini paid-tier prices (`eval/prices.yaml`, checked 2026-11-13); the project itself runs on the free tier for $0. The fine-tuned SQL model runs locally and costs nothing. "agent only" / `*`: the run was saved before `query_database` reported the SQL model's tokens (`?`), so Gemini's SQL calls are missing from the cost.
