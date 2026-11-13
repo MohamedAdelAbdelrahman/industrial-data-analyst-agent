@@ -11,6 +11,7 @@ Usage:
     python eval/run_eval.py --config llm --only sql_active_alarms,ref_off_topic
     python eval/run_eval.py --report                     # score both configs, write report.md + summary.json
     python eval/run_eval.py --arch single --config llm --run single_v2   # one model with all tools, no plan
+    python eval/run_eval.py --arch both --config llm --run arch_v3       # both graphs back to back -> arch_v3_planner, arch_v3_single
     python eval/run_eval.py --compare prompts_v2 single_v2               # two runs side by side
 """
 import argparse
@@ -188,32 +189,45 @@ async def run_one(graph, task: dict, config: str, run: str, arch: str = "planner
             "trace_url": trace.url, **summarize(final, time.monotonic() - start)}
 
 
-async def run_tasks(configs: list[str], run: str, tasks: list[dict], redo: bool, arch: str = "planner") -> None:
-    """Each task runs under every config back to back, so both see the same free-tier models: the pools
-    move to other models as quotas run out, and that must not look like a difference between backends."""
+def run_names(run: str, archs: list[str]) -> dict[str, str]:
+    """One results folder per arch: `run` itself, or `<run>_<arch>` when several archs run together."""
+    return {a: run if len(archs) == 1 else f"{run}_{a}" for a in archs}
+
+
+async def run_tasks(configs: list[str], run: str, tasks: list[dict], redo: bool,
+                    archs: list[str] | None = None) -> None:
+    """Each task runs under every config (and arch) back to back, so all of them see the same free-tier
+    models: the pools move to other models as quotas run out, and that must not look like a difference
+    between backends or architectures."""
     from ida.agent.graph import build_graph, default_models
     from ida.agent.mcp_client import mcp_tools
     from ida.agent.single import build_single_graph, default_single_models
     from ida.agent.tracing import flush
 
-    done = {c: {} if redo else saved(run, c) for c in configs}
-    other = {r.get("arch", "planner") for c in CONFIGS for r in saved(run, c).values()} - {arch}
-    if other:
-        sys.exit(f"run {run!r} already holds {sorted(other)} results; use another --run name for --arch {arch}")
-    todo = [(t, c) for t in tasks for c in configs if t["id"] not in done[c]]
-    print(", ".join(f"[{c}] {len(done[c])} saved" for c in configs) + f"; {len(todo)} runs to do", flush=True)
+    archs = archs or ["planner"]
+    runs = run_names(run, archs)
+    for arch, name in runs.items():
+        other = {r.get("arch", "planner") for c in CONFIGS for r in saved(name, c).values()} - {arch}
+        if other:
+            sys.exit(f"run {name!r} already holds {sorted(other)} results; use another --run name for --arch {arch}")
+    done = {(c, a): {} if redo else saved(runs[a], c) for c in configs for a in archs}
+    todo = [(t, c, a) for t in tasks for c in configs for a in archs if t["id"] not in done[c, a]]
+    print(", ".join(f"[{runs[a]} {c}] {len(d)} saved" for (c, a), d in done.items())
+          + f"; {len(todo)} runs to do", flush=True)
     if not todo:
         return
-    (RESULTS / run).mkdir(parents=True, exist_ok=True)
+    for name in runs.values():
+        (RESULTS / name).mkdir(parents=True, exist_ok=True)
     async with AsyncExitStack() as stack:
         graphs = {}
         for c in configs:
             os.environ["SQL_BACKEND"] = c       # before the MCP server starts: it inherits this environment
             tools = await stack.enter_async_context(mcp_tools())
-            graphs[c] = (build_single_graph(default_single_models(tools), tools) if arch == "single"
-                         else build_graph(default_models(tools), tools))
-        for i, (task, config) in enumerate(todo, 1):
-            print(f"\n[{i}/{len(todo)} {config}] {task['id']}: {task['question']}", flush=True)
+            for a in archs:
+                graphs[c, a] = (build_single_graph(default_single_models(tools), tools) if a == "single"
+                                else build_graph(default_models(tools), tools))
+        for i, (task, config, arch) in enumerate(todo, 1):
+            print(f"\n[{i}/{len(todo)} {config} {arch}] {task['id']}: {task['question']}", flush=True)
             for _ in range(MAX_TRIES):
                 wait = pool_wait_s(config, arch)
                 if wait > MAX_WAIT_S:
@@ -224,7 +238,7 @@ async def run_tasks(configs: list[str], run: str, tasks: list[dict], redo: bool,
                 if wait:
                     print(f"  every model of a pool is blocked, waiting {wait:.0f} s", flush=True)
                     await asyncio.sleep(wait + 1)
-                row = await run_one(graphs[config], task, config, run, arch)
+                row = await run_one(graphs[config, arch], task, config, runs[arch], arch)
                 await asyncio.sleep(PAUSE_S)
                 if row["status"] != "error":
                     break
@@ -234,11 +248,13 @@ async def run_tasks(configs: list[str], run: str, tasks: list[dict], redo: bool,
             wrong = [b for b in row["sql_backends"] if not b.startswith(config + ":")]
             if wrong:
                 sys.exit(f"query_database used {wrong}, not {config}: check SQL_BACKEND reaches the MCP server")
-            with results_path(run, config).open("a", encoding="utf-8") as f:
+            with results_path(runs[arch], config).open("a", encoding="utf-8") as f:
                 f.write(json.dumps(row, default=str) + "\n")
             failed = {k: v for k, v in check(task, row, db_path()).items() if v}
+            acc = accounting(row)
             print(f"  [{row['status']}] {'PASS' if not failed else 'FAIL ' + json.dumps(failed)[:300]}  "
-                  f"({row['tool_calls']} tools, {row['llm_calls']} LLM calls, {row['latency_s']} s)", flush=True)
+                  f"({row['tool_calls']} tools, {row['llm_calls']} LLM calls, {row['latency_s']} s, "
+                  f"${acc['cost_usd']:.4f})", flush=True)
     flush()
 
 
@@ -464,7 +480,8 @@ if __name__ == "__main__":
     ap.add_argument("--only", help="comma-separated task ids")
     ap.add_argument("--redo", action="store_true", help="run the selected tasks again even if saved")
     ap.add_argument("--report", action="store_true", help="score the saved results and write the report")
-    ap.add_argument("--arch", choices=ARCHS, default="planner", help="agent graph to run (default planner)")
+    ap.add_argument("--arch", choices=(*ARCHS, "both"), default="planner",
+                    help="agent graph to run (default planner); both = each task under both, back to back")
     ap.add_argument("--compare", nargs=2, metavar=("RUN_A", "RUN_B"), help="write a side-by-side table of two runs")
     a = ap.parse_args()
     all_tasks = load_tasks()
@@ -476,6 +493,6 @@ if __name__ == "__main__":
         sys.exit()
     if a.config:
         asyncio.run(run_tasks(list(CONFIGS) if a.config == "both" else [a.config], a.run, selected, a.redo,
-                              a.arch))
+                              list(ARCHS) if a.arch == "both" else [a.arch]))
     if a.report or not a.config:
         print(report(a.run, all_tasks))

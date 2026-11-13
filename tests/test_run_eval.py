@@ -180,3 +180,8 @@ def test_unrecorded_local_sql_still_gives_a_complete_cost():
     old = {"usage": {}, "tool_log": [q_event(None, recorded=False)]}
     assert run_eval.accounting(old | {"sql_backends": ["finetuned:ida-sql"]}, PRICES)["cost_complete"]
     assert not run_eval.accounting(old | {"sql_backends": ["llm:a"]}, PRICES)["cost_complete"]
+
+
+def test_run_names_split_by_arch_only_when_both_run():
+    assert run_eval.run_names("r", ["single"]) == {"single": "r"}
+    assert run_eval.run_names("r", ["planner", "single"]) == {"planner": "r_planner", "single": "r_single"}
