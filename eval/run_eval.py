@@ -10,6 +10,8 @@ Usage:
     python eval/run_eval.py --config finetuned           # only SQL written by the fine-tuned Qwen in Ollama
     python eval/run_eval.py --config llm --only sql_active_alarms,ref_off_topic
     python eval/run_eval.py --report                     # score both configs, write report.md + summary.json
+    python eval/run_eval.py --arch single --config llm --run single_v2   # one model with all tools, no plan
+    python eval/run_eval.py --compare prompts_v2 single_v2               # two runs side by side
 """
 import argparse
 import asyncio
@@ -30,6 +32,7 @@ EVAL_DIR = Path(__file__).resolve().parent
 TASKS = EVAL_DIR / "tasks.yaml"
 RESULTS = EVAL_DIR / "results"
 CONFIGS = ("llm", "finetuned")
+ARCHS = ("planner", "single")     # ida.agent.graph (planner/executor) or ida.agent.single
 CATEGORIES = ("sql_only", "manual_only", "sql+manual", "sql+python", "multi_hop", "should_refuse")
 CHECK_KEYS = {"expect_sql", "mention", "numbers", "manual", "chart", "refuse"}
 TASK_KEYS = CHECK_KEYS | {"id", "category", "question", "note", "tol"}
@@ -166,11 +169,11 @@ def summarize(final: dict, elapsed: float) -> dict:
                                     if e["name"] == "query_database" and e["output"].get("sql_backend")})}
 
 
-async def run_one(graph, task: dict, config: str, run: str) -> dict:
+async def run_one(graph, task: dict, config: str, run: str, arch: str = "planner") -> dict:
     from ida.agent.tracing import traced_run
     final: dict = {}
     start = time.monotonic()
-    with traced_run(task["question"], tags=["eval", f"config:{config}", f"run:{run}"],
+    with traced_run(task["question"], tags=["eval", f"config:{config}", f"run:{run}", f"arch:{arch}"],
                     metadata={"task_id": task["id"], "category": task["category"]}) as trace:
         try:
             async for chunk in graph.astream({"question": task["question"]}, stream_mode="updates",
@@ -179,19 +182,23 @@ async def run_one(graph, task: dict, config: str, run: str) -> dict:
                     final |= update or {}
         except Exception as e:  # noqa: BLE001 -- the caller decides whether to stop or go on
             final = {"status": "error", "final_answer": f"{type(e).__name__}: {e}"}
-    return {"id": task["id"], "category": task["category"], "config": config, "run": run,
+    return {"id": task["id"], "category": task["category"], "config": config, "run": run, "arch": arch,
             "question": task["question"], "finished_at": datetime.now().isoformat(timespec="seconds"),
             "trace_url": trace.url, **summarize(final, time.monotonic() - start)}
 
 
-async def run_tasks(configs: list[str], run: str, tasks: list[dict], redo: bool) -> None:
+async def run_tasks(configs: list[str], run: str, tasks: list[dict], redo: bool, arch: str = "planner") -> None:
     """Each task runs under every config back to back, so both see the same free-tier models: the pools
     move to other models as quotas run out, and that must not look like a difference between backends."""
     from ida.agent.graph import build_graph, default_models
     from ida.agent.mcp_client import mcp_tools
+    from ida.agent.single import build_single_graph, default_single_models
     from ida.agent.tracing import flush
 
     done = {c: {} if redo else saved(run, c) for c in configs}
+    other = {r.get("arch", "planner") for c in CONFIGS for r in saved(run, c).values()} - {arch}
+    if other:
+        sys.exit(f"run {run!r} already holds {sorted(other)} results; use another --run name for --arch {arch}")
     todo = [(t, c) for t in tasks for c in configs if t["id"] not in done[c]]
     print(", ".join(f"[{c}] {len(done[c])} saved" for c in configs) + f"; {len(todo)} runs to do", flush=True)
     if not todo:
@@ -202,11 +209,12 @@ async def run_tasks(configs: list[str], run: str, tasks: list[dict], redo: bool)
         for c in configs:
             os.environ["SQL_BACKEND"] = c       # before the MCP server starts: it inherits this environment
             tools = await stack.enter_async_context(mcp_tools())
-            graphs[c] = build_graph(default_models(tools), tools)
+            graphs[c] = (build_single_graph(default_single_models(tools), tools) if arch == "single"
+                         else build_graph(default_models(tools), tools))
         for i, (task, config) in enumerate(todo, 1):
             print(f"\n[{i}/{len(todo)} {config}] {task['id']}: {task['question']}", flush=True)
             for _ in range(MAX_TRIES):
-                wait = pool_wait_s(config)
+                wait = pool_wait_s(config, arch)
                 if wait > MAX_WAIT_S:
                     print(f"stopping: a model pool stays blocked for {wait / 60:.0f} min (daily quota?); "
                           "run the same command again later")
@@ -215,7 +223,7 @@ async def run_tasks(configs: list[str], run: str, tasks: list[dict], redo: bool)
                 if wait:
                     print(f"  every model of a pool is blocked, waiting {wait:.0f} s", flush=True)
                     await asyncio.sleep(wait + 1)
-                row = await run_one(graphs[config], task, config, run)
+                row = await run_one(graphs[config], task, config, run, arch)
                 await asyncio.sleep(PAUSE_S)
                 if row["status"] != "error":
                     break
@@ -233,12 +241,13 @@ async def run_tasks(configs: list[str], run: str, tasks: list[dict], redo: bool)
     flush()
 
 
-def pool_wait_s(config: str) -> float:
+def pool_wait_s(config: str, arch: str = "planner") -> float:
     """Seconds until every pool the run needs has a free model (0 = go now)."""
     from ida.config import get_settings
     from ida.model_pool import default_memory
     st, memory, now = get_settings(), default_memory(), datetime.now().astimezone()
-    pools = [st.planner_models, st.executor_models] + ([st.sql_llm_models] if config == "llm" else [])
+    pools = [st.planner_models] + ([st.executor_models] if arch == "planner" else [])
+    pools += [st.sql_llm_models] if config == "llm" else []
     waits = []
     for pool in pools:
         untils = [memory.blocked_until(m) for m in pool]
@@ -274,7 +283,8 @@ def _pct(n: int, d: int) -> str:
 def report(run: str, tasks: list[dict]) -> str:
     scored = score_run(run, tasks)
     per_cat = Counter(t["category"] for t in tasks)
-    lines = [f"Run `{run}`, {len(tasks)} tasks (`eval/tasks.yaml`).", "",
+    archs = sorted({r.get("arch", "planner") for rs in scored.values() for r in rs}) or ["planner"]
+    lines = [f"Run `{run}` ({' + '.join(archs)} agent), {len(tasks)} tasks (`eval/tasks.yaml`).", "",
              "| | " + " | ".join(f"`SQL_BACKEND={c}`" for c in CONFIGS) + " |",
              "|---|" + "---|" * len(CONFIGS)]
 
@@ -291,8 +301,9 @@ def report(run: str, tasks: list[dict]) -> str:
     for label, key in (("avg tool calls", "tool_calls"), ("avg LLM calls", "llm_calls"),
                        ("avg tokens", "tokens"), ("avg latency (s)", "latency_s")):
         row(label, lambda rs, key=key: f"{sum(r[key] for r in rs) / len(rs):,.1f}" if rs else "-")
-    lines += ["", "LLM calls are the planner, executor and answerer. Under `llm` every query_database call is "
-              "one more Gemini call inside the MCP server; under `finetuned` it runs locally in Ollama."]
+    lines += ["", "LLM calls are the agent's own calls (planner, executor and answerer, or the single agent). "
+              "Under `llm` every query_database call is one more Gemini call inside the MCP server; under "
+              "`finetuned` it runs locally in Ollama."]
     lines += ["", "Failed checks per task (`-` = passed, blank = not run):", "",
               "| task | " + " | ".join(CONFIGS) + " |", "|---|" + "---|" * len(CONFIGS)]
     by_id = {c: {r["id"]: r for r in scored[c]} for c in CONFIGS}
@@ -317,6 +328,50 @@ def report(run: str, tasks: list[dict]) -> str:
     return md
 
 
+def _failed_checks(r: dict) -> str:
+    return "-" if r["passed"] else ", ".join(k for k, v in r["checks"].items() if v)
+
+
+def _compare_config(config: str, runs: dict[str, list[dict]]) -> list[str]:
+    (name_a, ra), (name_b, rb) = runs.items()
+    arch = {n: "+".join(sorted({r.get("arch", "planner") for r in rs})) for n, rs in runs.items()}
+    lines = ["", f"### `SQL_BACKEND={config}`", "",
+             f"| | `{name_a}` ({arch[name_a]}) | `{name_b}` ({arch[name_b]}) |", "|---|---|---|"]
+
+    def row(label, fn):
+        lines.append(f"| {label} | {fn(ra)} | {fn(rb)} |")
+
+    row("**passed**", lambda rs: _pct(sum(r["passed"] for r in rs), len(rs)))
+    for cat in CATEGORIES:
+        row(cat, lambda rs, cat=cat: _pct(sum(r["passed"] for r in rs if r["category"] == cat),
+                                          sum(r["category"] == cat for r in rs)))
+    row("partial (a budget ended the run)", lambda rs: str(sum(r["status"] == "partial" for r in rs)))
+    for label, key in (("avg tool calls", "tool_calls"), ("avg LLM calls", "llm_calls"),
+                       ("avg tokens", "tokens"), ("avg latency (s)", "latency_s")):
+        row(label, lambda rs, key=key: f"{sum(r[key] for r in rs) / len(rs):,.1f}")
+    row("LLM calls per model", lambda rs: ", ".join(
+        f"{m} {n}" for m, n in sum((Counter({m: u["calls"]}) for r in rs for m, u in r["usage"].items()),
+                                   Counter()).most_common()))
+    by_a, by_b = {r["id"]: r for r in ra}, {r["id"]: r for r in rb}
+    diff = [i for i in by_a if i in by_b and by_a[i]["passed"] != by_b[i]["passed"]]
+    lines += ["", "Tasks with different results (failed checks, `-` = passed):", ""]
+    lines += [f"- `{i}`: {name_a} {_failed_checks(by_a[i])}; {name_b} {_failed_checks(by_b[i])}"
+              for i in diff] or ["- none"]
+    return lines
+
+
+def compare(run_a: str, run_b: str, tasks: list[dict]) -> str:
+    """Two runs side by side (e.g. planner/executor vs single agent), per SQL backend both have results."""
+    a, b = score_run(run_a, tasks), score_run(run_b, tasks)
+    lines = [f"`{run_a}` vs `{run_b}`, {len(tasks)} tasks (`eval/tasks.yaml`)."]
+    for config in CONFIGS:
+        if a[config] and b[config]:
+            lines += _compare_config(config, {run_a: a[config], run_b: b[config]})
+    md = "\n".join(lines) + "\n"
+    (RESULTS / f"compare_{run_a}_vs_{run_b}.md").write_text(md, encoding="utf-8")
+    return md
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--config", choices=(*CONFIGS, "both"), help="run the tasks with this SQL backend")
@@ -324,12 +379,18 @@ if __name__ == "__main__":
     ap.add_argument("--only", help="comma-separated task ids")
     ap.add_argument("--redo", action="store_true", help="run the selected tasks again even if saved")
     ap.add_argument("--report", action="store_true", help="score the saved results and write the report")
+    ap.add_argument("--arch", choices=ARCHS, default="planner", help="agent graph to run (default planner)")
+    ap.add_argument("--compare", nargs=2, metavar=("RUN_A", "RUN_B"), help="write a side-by-side table of two runs")
     a = ap.parse_args()
     all_tasks = load_tasks()
     selected = [t for t in all_tasks if not a.only or t["id"] in a.only.split(",")]
     if a.only and len(selected) != len(a.only.split(",")):
         sys.exit(f"unknown task id in {a.only}")
+    if a.compare:
+        print(compare(*a.compare, all_tasks))
+        sys.exit()
     if a.config:
-        asyncio.run(run_tasks(list(CONFIGS) if a.config == "both" else [a.config], a.run, selected, a.redo))
+        asyncio.run(run_tasks(list(CONFIGS) if a.config == "both" else [a.config], a.run, selected, a.redo,
+                              a.arch))
     if a.report or not a.config:
         print(report(a.run, all_tasks))

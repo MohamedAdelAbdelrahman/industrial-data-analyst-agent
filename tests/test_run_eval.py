@@ -109,3 +109,34 @@ def test_pool_wait_needs_every_model_of_a_pool_blocked(tmp_path, monkeypatch):
     for m in planners:
         memory.block(m, soon, "rate limited")
     assert 80 < run_eval.pool_wait_s("finetuned") <= 90
+
+
+def test_single_agent_waits_only_on_its_pools(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta
+
+    from ida.config import get_settings
+    from ida.model_pool import QuotaMemory
+    monkeypatch.setenv("QUOTA_PATH", str(tmp_path / "quota.json"))
+    memory, soon = QuotaMemory(tmp_path / "quota.json"), datetime.now().astimezone() + timedelta(seconds=90)
+    for m in get_settings().executor_models:
+        memory.block(m, soon, "rate limited")
+    assert run_eval.pool_wait_s("finetuned", "single") == 0      # the single agent has no executor
+    assert run_eval.pool_wait_s("finetuned", "planner") > 0
+
+
+def test_compare_lists_the_tasks_that_differ(tmp_path, monkeypatch):
+    import json
+    monkeypatch.setattr(run_eval, "RESULTS", tmp_path)
+    usage = {"m": {"input": 1, "output": 1, "calls": 2}}
+    for name, arch, status in (("a", "planner", "answered"), ("b", "single", "refused")):
+        p = run_eval.results_path(name, "llm")
+        p.parent.mkdir(parents=True)
+        row = {"id": "ref_off_topic", "category": "should_refuse", "arch": arch, "status": status,
+               "final_answer": "", "tool_log": [], "tool_calls": 0, "llm_calls": 2, "tokens": 2,
+               "latency_s": 1.0, "usage": usage}
+        p.write_text(json.dumps(row) + "\n", encoding="utf-8")
+    md = run_eval.compare("a", "b", [TASKS["ref_off_topic"]])
+    assert "| `a` (planner) | `b` (single) |" in md and "SQL_BACKEND=finetuned" not in md
+    assert "| **passed** | 0/1 (0%) | 1/1 (100%) |" in md
+    assert "- `ref_off_topic`: a refuse; b -" in md
+    assert (tmp_path / "compare_a_vs_b.md").exists()

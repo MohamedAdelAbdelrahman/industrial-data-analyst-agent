@@ -120,17 +120,60 @@ def _evidence(state: AgentState) -> str:
             + wrap_untrusted("\n".join(parts) or "(none)", "tool results"))
 
 
+# ---------- nodes shared with the single-agent graph (ida.agent.single) ----------
+
+def guard(state: AgentState) -> dict:
+    res = input_guard(state["question"])
+    if res.blocked:
+        return {"status": "refused", "final_answer": res.reason, "guard_flags": res.flags}
+    return {"guard_flags": []}
+
+
+async def call_tools(tools_by_name: dict[str, BaseTool], state: AgentState, step_id: int) -> dict:
+    """Run the tool calls of the last message in step_messages; log them and count them."""
+    ai: AIMessage = state["step_messages"][-1]
+    new_msgs, events, flags = [], [], []
+    for call in ai.tool_calls:
+        start = time.monotonic()
+        tool = tools_by_name.get(call["name"])
+        if tool is None:
+            output = {"error": f"Unknown tool {call['name']!r}"}
+            content = json.dumps(output)
+        else:
+            msg = await tool.ainvoke({"type": "tool_call", "id": call["id"],
+                                      "name": call["name"], "args": call["args"]})
+            output = tool_output(msg)
+            content = json.dumps(output, default=str)
+        if len(content) > MAX_TOOL_CONTENT:
+            content = content[:MAX_TOOL_CONTENT] + "... [truncated]"
+        flags += [f"step {step_id} {call['name']}: {f}" for f in injection_flags(content)]
+        new_msgs.append(ToolMessage(content=wrap_untrusted(content, call["name"]), tool_call_id=call["id"], name=call["name"]))
+        events.append(ToolEvent(step_id=step_id, name=call["name"], args=call["args"], output=output,
+                                error=output.get("error"), duration_s=round(time.monotonic() - start, 2)))
+    n = len(ai.tool_calls)
+    return {"step_messages": [*state["step_messages"], *new_msgs],
+            "tool_log": [*state.get("tool_log", []), *events],
+            "tool_calls": state.get("tool_calls", 0) + n,
+            "step_tool_calls": state.get("step_tool_calls", 0) + n,
+            "guard_flags": [*state.get("guard_flags", []), *flags]}
+
+
+def check_answer(state: AgentState) -> dict:
+    # numbers may come from tool results, the question, or the plant facts in the prompts (60 days, ...)
+    evidence = " ".join([state["question"], prompts.DOMAIN,
+                         *(json.dumps(e["output"], default=str) for e in state.get("tool_log", []))])
+    res = output_guard(state["final_answer"], evidence)
+    if not res.flags:
+        return {}
+    return {"final_answer": state["final_answer"] + "\n\n_Check: " + "; ".join(res.flags) + "._",
+            "guard_flags": [*state.get("guard_flags", []), *res.flags]}
+
+
 # ---------- graph ----------
 
 def build_graph(models: AgentModels, tools: list[BaseTool], budgets: Budgets | None = None):
     budgets = budgets or Budgets()
     tools_by_name = {t.name: t for t in tools}
-
-    def guard(state: AgentState) -> dict:
-        res = input_guard(state["question"])
-        if res.blocked:
-            return {"status": "refused", "final_answer": res.reason, "guard_flags": res.flags}
-        return {"guard_flags": []}
 
     async def planner(state: AgentState) -> dict:
         res = await models.planner.ainvoke([SystemMessage(prompts.PLANNER), HumanMessage(state["question"])])
@@ -158,32 +201,8 @@ def build_graph(models: AgentModels, tools: list[BaseTool], budgets: Budgets | N
                 "usage": _add_usage(state.get("usage", {}), models.names.get("executor", "executor"), ai)}
 
     async def run_tools(state: AgentState) -> dict:
-        ai: AIMessage = state["step_messages"][-1]
         step_id = state["plan"][state["current"]]["id"]
-        new_msgs, events, flags = [], [], []
-        for call in ai.tool_calls:
-            start = time.monotonic()
-            tool = tools_by_name.get(call["name"])
-            if tool is None:
-                output = {"error": f"Unknown tool {call['name']!r}"}
-                content = json.dumps(output)
-            else:
-                msg = await tool.ainvoke({"type": "tool_call", "id": call["id"],
-                                          "name": call["name"], "args": call["args"]})
-                output = tool_output(msg)
-                content = json.dumps(output, default=str)
-            if len(content) > MAX_TOOL_CONTENT:
-                content = content[:MAX_TOOL_CONTENT] + "... [truncated]"
-            flags += [f"step {step_id} {call['name']}: {f}" for f in injection_flags(content)]
-            new_msgs.append(ToolMessage(content=wrap_untrusted(content, call["name"]), tool_call_id=call["id"], name=call["name"]))
-            events.append(ToolEvent(step_id=step_id, name=call["name"], args=call["args"], output=output,
-                                    error=output.get("error"), duration_s=round(time.monotonic() - start, 2)))
-        n = len(ai.tool_calls)
-        return {"step_messages": [*state["step_messages"], *new_msgs],
-                "tool_log": [*state.get("tool_log", []), *events],
-                "tool_calls": state.get("tool_calls", 0) + n,
-                "step_tool_calls": state.get("step_tool_calls", 0) + n,
-                "guard_flags": [*state.get("guard_flags", []), *flags]}
+        return await call_tools(tools_by_name, state, step_id)
 
     def after_executor(state: AgentState) -> str:
         ai = state["step_messages"][-1]
@@ -250,16 +269,6 @@ def build_graph(models: AgentModels, tools: list[BaseTool], budgets: Budgets | N
         return {"final_answer": ai.text if hasattr(ai, "text") else str(ai.content),
                 "status": "partial" if state.get("stop_reason") or unrecovered else "answered",
                 "usage": _add_usage(state.get("usage", {}), models.names.get("answerer", "answerer"), ai)}
-
-    def check_answer(state: AgentState) -> dict:
-        # numbers may come from tool results, the question, or the plant facts in the prompts (60 days, ...)
-        evidence = " ".join([state["question"], prompts.DOMAIN,
-                             *(json.dumps(e["output"], default=str) for e in state.get("tool_log", []))])
-        res = output_guard(state["final_answer"], evidence)
-        if not res.flags:
-            return {}
-        return {"final_answer": state["final_answer"] + "\n\n_Check: " + "; ".join(res.flags) + "._",
-                "guard_flags": [*state.get("guard_flags", []), *res.flags]}
 
     g = StateGraph(AgentState)
     g.add_node("input_guard", guard)
