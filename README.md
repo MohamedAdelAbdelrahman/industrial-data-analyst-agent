@@ -5,6 +5,7 @@ An agent that answers questions about an industrial machine fleet (27 machines, 
 **Headline numbers**
 - Fine-tuning Qwen2.5-Coder-1.5B raised Text-to-SQL execution accuracy from **28.7% to 64.3%** on 129 held-out questions (Gemini flash-lite: 76.7%).
 - The full agent passes **36/37** eval tasks with Gemini writing the SQL and **35/37** with the fine-tuned local model, after two measured rounds of prompt changes (baseline 34 and 33).
+- A **single tool-calling agent** (no plan) also passes **37/37** with about half the LLM calls (2.5 vs 4.8 per task), so on these tasks the planner/executor split does not pay for itself in accuracy.
 - Built for **$0**: free-tier Gemini with per-role model pools and a quota memory, a free Colab T4 for training, and local inference.
 
 ![Demo: the Streamlit UI answers a question with SQL and a manual search, and shows the plan, tool calls and SQL](docs/demo.gif)
@@ -98,6 +99,18 @@ v1 helped the Gemini backend but not the fine-tuned one: its more detailed quest
 
 Still failing in v2: both backends answer "which presses had a HIGH_HIGH oil-temperature alarm" (true answer: none) with presses whose HIGH_HIGH alarms were on other sensors, after the exact query correctly returned no rows; and the fine-tuned model once dropped the machine column from a per-pump query, so the chart step ran out of tool calls. Each task ran once per config, so a 1-2 task difference is close to noise. Reports: [`baseline`](eval/results/baseline/report.md), [`prompts_v1`](eval/results/prompts_v1/report.md), [`prompts_v2`](eval/results/prompts_v2/report.md).
 
+**Single agent vs planner/executor** (`--arch single`, run `single_v2`, Gemini writes the SQL). The single agent is one model from the planner pool with all three tools in a ReAct loop: same tools, guards, budgets and query/answer rules, but no plan, no separate executor and no separate answerer.
+
+| | planner/executor (`prompts_v2`) | single agent (`single_v2`) |
+|---|---|---|
+| **Tasks passed** | **36/37** | **37/37** |
+| Avg LLM calls per task | 4.8 | 2.5 |
+| Avg tool calls per task | 1.7 | 1.8 |
+| Avg tokens per task | 7,223 | 6,222 |
+| Median latency | 11.2 s | 5.2 s |
+
+The one task that differs is the HIGH_HIGH oil-temperature trap: the single agent answers "none" and the planner run reported presses with alarms on other sensors. Every single-agent answer was read by hand; none passed by accident. Most tasks need 1-3 tool calls, and for those a separate plan, executor and answerer only add LLM calls. Caveats: the two runs were 9 days apart and used different free-tier models (the single agent's tool loop ran on planner-pool models, while the planner run's executor was mostly the cheaper flash-lite), each task ran once, and a 1-task gap is noise. What the split still gives: a plan the UI can show, per-step budgets and replanning, and a cheap model for the tool loop. Side by side: [`compare_prompts_v2_vs_single_v2.md`](eval/results/compare_prompts_v2_vs_single_v2.md).
+
 ## Design decisions
 Each of these came from a failure seen while building; the [decision log](docs/design.md#6-decision-log-findings-while-building) has the details.
 
@@ -110,6 +123,7 @@ Each of these came from a failure seen while building; the [decision log](docs/d
 ## Limitations
 - The data and manuals are synthetic, and Gemini models wrote the gold SQL, so Gemini's 76.7% is an upper estimate.
 - 37 tasks, each run once per config: a difference of 1-2 tasks is noise.
+- The single-agent comparison ran on another day than the planner run, with a different free-tier model mix; a same-day run of both and harder multi-step tasks would make it firmer.
 - When the exact query correctly returns no rows, the agent can widen it and report the wider rows as matches (the HIGH_HIGH oil-temperature task fails this way on both backends).
 - `output_guard` catches invented numbers, not wrongly summarised ones or wrong claims.
 - The fine-tuned model's remaining SQL errors are mostly invented column names; it is weak on window functions, thresholds and time windows.
@@ -169,6 +183,8 @@ python eval/eval_retrieval.py                                # manual search rec
 python eval/eval_sql.py                                      # Text-to-SQL execution accuracy
 python eval/run_eval.py --config both --run my_run           # 37 agent tasks, both SQL backends
 python eval/run_eval.py --run my_run --report                # score again -> eval/results/my_run/report.md
+python eval/run_eval.py --arch single --config llm --run my_single   # single agent instead of planner/executor
+python eval/run_eval.py --compare my_run my_single           # side by side -> eval/results/compare_*.md
 pytest --live                                                # also runs tests that call the LLM
 ```
 
@@ -189,7 +205,7 @@ The question→SQL pairs were written by Gemini and checked by execution. They a
 data/            schema, DB generator, manual builder, manual PDFs
 src/ida/
   mcp_server/    FastMCP server, query_database / search_manuals / run_python
-  agent/         LangGraph graph, prompts, guardrails, tracing, CLI
+  agent/         LangGraph graph (planner/executor; single.py: one-model baseline), prompts, guardrails, tracing, CLI
   ui/            Streamlit app
   model_pool.py  per-role Gemini pools with quota memory
   training_data.py  question/SQL pair generation, checks, split
