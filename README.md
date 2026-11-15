@@ -12,6 +12,8 @@ An agent that answers questions about an industrial machine fleet (27 machines, 
 
 *Recorded live on the free Gemini tier (26 s; slower runs happen when a model is busy and the pool switches models).*
 
+**Full demo video (2.5 min, captioned):** https://youtu.be/V8Z3enOGEYw: a live question, the blocked delete request, and the results.
+
 ## Architecture
 
 ```mermaid
