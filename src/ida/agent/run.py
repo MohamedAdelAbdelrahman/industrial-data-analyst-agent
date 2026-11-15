@@ -3,6 +3,7 @@
 Usage:
     python -m ida.agent.run "Which compressor had the most alarms?"
     python -m ida.agent.run --demo           # the 5 sample questions
+    python -m ida.agent.run --single "..."   # one model with all tools, no plan (ida.agent.single)
 """
 import argparse
 import asyncio
@@ -43,7 +44,7 @@ def print_update(node: str, update: dict, seen_events: int = 0, seen_flags: int 
             print(f"[planner] REFUSED: {update['final_answer']}")
         for s in update.get("plan", []):
             print(f"[planner] {s['id']}. ({s['tool']}) {s['goal']}")
-    elif node == "executor":
+    elif node in ("executor", "agent"):
         ai = update["step_messages"][-1]
         for c in ai.tool_calls:
             print(f"  [executor] -> {c['name']}({json.dumps(c['args'])[:300]})")
@@ -86,9 +87,13 @@ async def ask(graph, question: str) -> dict:
     return final
 
 
-async def main(questions: list[str]) -> None:
+async def main(questions: list[str], single: bool = False) -> None:
     async with mcp_tools() as tools:
-        graph = build_graph(default_models(tools), tools)
+        if single:
+            from ida.agent.single import build_single_graph, default_single_models
+            graph = build_single_graph(default_single_models(tools), tools)
+        else:
+            graph = build_graph(default_models(tools), tools)
         for q in questions:
             await ask(graph, q)
     flush()
@@ -98,5 +103,6 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("question", nargs="*")
     ap.add_argument("--demo", action="store_true")
+    ap.add_argument("--single", action="store_true", help="single agent instead of planner/executor")
     a = ap.parse_args()
-    asyncio.run(main(DEMO if a.demo or not a.question else [" ".join(a.question)]))
+    asyncio.run(main(DEMO if a.demo or not a.question else [" ".join(a.question)], a.single))

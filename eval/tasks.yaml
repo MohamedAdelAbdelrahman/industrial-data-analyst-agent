@@ -186,10 +186,11 @@
 # ---------- sql+python ----------
 - id: py_compressor03_daily_max
   category: sql+python
-  note: the daily max ranges 91.49-95.75 degC over all 60 days; head() shows only the first 5 (Step 8 failure)
+  note: the daily max ranges 91.49-95.75 degC over all 60 days (peak on 2026-09-07, day 37); answers that only read the first rows (head(), or the planner answerer's first 20 evidence rows) report 95.10, within the default 1%, so tol is 0.001
   question: Plot the daily maximum discharge temperature of Compressor-03 and compare it with its warning threshold.
   chart: true
   numbers: [105, 95.75]
+  tol: 0.001
 
 - id: py_pump02_p95
   category: sql+python

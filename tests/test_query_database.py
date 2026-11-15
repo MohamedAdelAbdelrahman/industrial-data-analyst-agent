@@ -148,3 +148,36 @@ def test_tool_reports_generator_failure(small_db, tmp_path):
     settings = dataclasses.replace(get_settings(), db_path=small_db, dataset_dir=tmp_path)
     out = QueryDatabaseTool(settings, Broken(), DatasetStore(tmp_path))("anything")
     assert out["error"].startswith("SQL generator unavailable") and "429" in out["error"]
+
+
+def test_tool_reports_the_model_and_tokens_of_this_call(small_db, tmp_path):
+    class Switching:
+        name = "llm:first"
+        last_usage = None
+
+        def generate(self, question):          # the pool fell over to another model for this call
+            self.name, self.last_usage = "llm:second", {"model": "second", "input": 900, "output": 40}
+            return "SELECT 1"
+
+    settings = dataclasses.replace(get_settings(), db_path=small_db, dataset_dir=tmp_path)
+    out = QueryDatabaseTool(settings, Switching(), DatasetStore(tmp_path))("one")
+    assert out["sql_backend"] == "llm:second"
+    assert out["sql_usage"] == {"model": "second", "input": 900, "output": 40}
+
+
+def test_ollama_generator_counts_tokens(monkeypatch):
+    import httpx
+
+    from ida.mcp_server import sql_generator
+
+    class Resp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"response": "```sql\nSELECT 1\n```", "prompt_eval_count": 812, "eval_count": 9}
+
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: Resp())
+    gen = sql_generator.OllamaSQLGenerator(get_settings())
+    assert gen.generate("q") == "SELECT 1"
+    assert gen.last_usage == {"model": f"ollama:{get_settings().finetuned_sql_model}", "input": 812, "output": 9}

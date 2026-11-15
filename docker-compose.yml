@@ -1,0 +1,129 @@
+# docker compose up            -> UI on http://localhost:8501 (SQL from Gemini, SQL_BACKEND=llm)
+# docker compose --profile finetuned up
+#                              -> also Ollama serving the fine-tuned ida-sql model
+#                                 (needs finetune/model/*.gguf and SQL_BACKEND=finetuned in .env)
+# Secrets come from .env (copy .env.example). Langfuse stays the cloud service named there.
+name: ida
+
+# Shared settings for the two services that run the app image.
+x-app: &app
+  build: .
+  image: ida-app:latest
+  env_file: .env
+  environment:
+    # Everything the app writes goes to the ida-data volume, so it survives `docker compose down`.
+    DB_PATH: /ida-data/sensors.db
+    INDEX_DIR: /ida-data/index
+    DATASET_DIR: /ida-data/cache/datasets
+    ARTIFACTS_DIR: /ida-data/cache/artifacts
+    QUOTA_PATH: /ida-data/cache/quota.json
+    # run_python asks the host's Docker daemon for sandbox containers, and the daemon cannot see
+    # paths inside this container. Run folders therefore go on a named volume the daemon knows.
+    SANDBOX_WORK_DIR: /sandbox-work
+    SANDBOX_VOLUME: ida-sandbox-work
+    # "ollama" is the service below. To use Ollama on the host instead (with your GPU), put
+    # DOCKER_OLLAMA_URL=http://host.docker.internal:11434 in .env.
+    OLLAMA_URL: ${DOCKER_OLLAMA_URL:-http://ollama:11434}
+    # the ollama service runs on CPU: ~45 s per SQL query here, ~1 s with the host's GPU Ollama
+    OLLAMA_TIMEOUT_S: ${OLLAMA_TIMEOUT_S:-180}
+  volumes:
+    - ida-data:/ida-data
+    - sandbox-work:/sandbox-work
+
+services:
+  # Builds the run_python sandbox image (tagged ida-sandbox:latest), prints a line and exits.
+  # The app never starts this container itself; it starts fresh ones from the image per run.
+  sandbox-image:
+    build: ./sandbox
+    image: ida-sandbox:latest
+    command: ["python", "-c", "print('sandbox image ready')"]
+    network_mode: none
+
+  # One-shot: create the sensor database and the manual search index if they are missing.
+  init:
+    <<: *app
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        [ -f "$$DB_PATH" ] || python data/generate_db.py --out "$$DB_PATH"
+        [ -f "$$INDEX_DIR/chroma.sqlite3" ] || python -m ida.mcp_server.manuals_index
+        echo "data ready"
+
+  # Streamlit UI + agent; the MCP server runs as its subprocess (stdio) in this container.
+  app:
+    <<: *app
+    volumes:
+      - ida-data:/ida-data
+      - sandbox-work:/sandbox-work
+      # Access to the host's Docker daemon, needed to start sandbox containers. This is
+      # root-equivalent on the host: the app is trusted, the code it runs is not (that code
+      # runs in the locked-down sandbox, which gets no socket and no network).
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "127.0.0.1:8501:8501"   # localhost only: the UI spends your API quota
+    depends_on:
+      sandbox-image:
+        condition: service_completed_successfully
+      init:
+        condition: service_completed_successfully
+      ollama-init:
+        condition: service_completed_successfully
+        required: false          # only exists with --profile finetuned
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health')"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+    restart: unless-stopped
+
+  # Local server for the fine-tuned Text-to-SQL model (CPU by default; a 1.5B 4-bit model is fine on CPU).
+  ollama:
+    image: ollama/ollama:0.40.16
+    profiles: [finetuned]
+    volumes:
+      - ollama-models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+    # NVIDIA GPU (needs the NVIDIA driver + WSL2 GPU support in Docker Desktop): uncomment
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices: [{driver: nvidia, count: all, capabilities: [gpu]}]
+
+  # One-shot: register finetune/model/*.gguf as "ida-sql" in the Ollama service.
+  ollama-init:
+    image: ollama/ollama:0.40.16
+    profiles: [finetuned]
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    volumes:
+      - ./finetune:/finetune:ro
+    # Copy the GGUF onto the container's own disk first: uploading it straight from a Docker
+    # Desktop (Windows) bind mount fails with "cannot allocate memory", while a plain copy works.
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        set -e
+        ls /finetune/model/*.gguf >/dev/null 2>&1 || { echo "no GGUF in finetune/model/ (see README)"; exit 1; }
+        mkdir -p /tmp/ft/model
+        cp /finetune/Modelfile /tmp/ft/
+        cp /finetune/model/*.gguf /tmp/ft/model/
+        ollama create ida-sql -f /tmp/ft/Modelfile
+        rm -rf /tmp/ft
+
+volumes:
+  ida-data:
+    name: ida-data
+  sandbox-work:
+    name: ida-sandbox-work   # fixed name: the app passes it to the Docker daemon (SANDBOX_VOLUME)
+  ollama-models:
+    name: ida-ollama-models

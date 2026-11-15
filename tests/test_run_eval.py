@@ -109,3 +109,79 @@ def test_pool_wait_needs_every_model_of_a_pool_blocked(tmp_path, monkeypatch):
     for m in planners:
         memory.block(m, soon, "rate limited")
     assert 80 < run_eval.pool_wait_s("finetuned") <= 90
+
+
+def test_single_agent_waits_only_on_its_pools(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta
+
+    from ida.config import get_settings
+    from ida.model_pool import QuotaMemory
+    monkeypatch.setenv("QUOTA_PATH", str(tmp_path / "quota.json"))
+    memory, soon = QuotaMemory(tmp_path / "quota.json"), datetime.now().astimezone() + timedelta(seconds=90)
+    for m in get_settings().executor_models:
+        memory.block(m, soon, "rate limited")
+    assert run_eval.pool_wait_s("finetuned", "single") == 0      # the single agent has no executor
+    assert run_eval.pool_wait_s("finetuned", "planner") > 0
+
+
+def test_compare_lists_the_tasks_that_differ(tmp_path, monkeypatch):
+    import json
+    monkeypatch.setattr(run_eval, "RESULTS", tmp_path)
+    usage = {"m": {"input": 1, "output": 1, "calls": 2}}
+    for name, arch, status in (("a", "planner", "answered"), ("b", "single", "refused")):
+        p = run_eval.results_path(name, "llm")
+        p.parent.mkdir(parents=True)
+        row = {"id": "ref_off_topic", "category": "should_refuse", "arch": arch, "status": status,
+               "final_answer": "", "tool_log": [], "tool_calls": 0, "llm_calls": 2, "tokens": 2,
+               "latency_s": 1.0, "usage": usage}
+        p.write_text(json.dumps(row) + "\n", encoding="utf-8")
+    md = run_eval.compare("a", "b", [TASKS["ref_off_topic"]])
+    assert "| `a` (planner) | `b` (single) |" in md and "SQL_BACKEND=finetuned" not in md
+    assert "| **passed** | 0/1 (0%) | 1/1 (100%) |" in md
+    assert "- `ref_off_topic`: a refuse; b -" in md
+    assert (tmp_path / "compare_a_vs_b.md").exists()
+
+
+PRICES = {"models": {"a": {"input": 1.0, "output": 10.0}}, "free_prefixes": ["ollama:"], "checked": "x"}
+
+
+def q_event(usage, recorded=True):
+    out = {"rows": [], "error": None}
+    if recorded:
+        out["sql_usage"] = usage
+    return {"name": "query_database", "args": {}, "output": out}
+
+
+def test_cost_adds_agent_and_sql_tokens():
+    result = {"usage": {"a": {"input": 1_000_000, "output": 100_000, "calls": 2}},
+              "tool_log": [q_event({"model": "a", "input": 500_000, "output": 0}),
+                           q_event({"model": "ollama:ida-sql", "input": 9_999, "output": 99})]}
+    acc = run_eval.accounting(result, PRICES)
+    assert acc["agent_tokens"] == 1_100_000 and acc["sql_tokens"] == 500_000 + 10_098
+    assert acc["cost_usd"] == pytest.approx(1.0 + 1.0 + 0.5)        # local model is free
+    assert acc["unpriced"] == []
+
+
+def test_runs_without_sql_usage_are_marked_not_recorded():
+    old = {"usage": {"b": {"input": 10, "output": 1, "calls": 1}}, "tool_log": [q_event(None, recorded=False)]}
+    acc = run_eval.accounting(old, PRICES)
+    assert acc["sql_tokens"] is None and acc["unpriced"] == ["b"] and acc["cost_usd"] == 0
+    # a failed generator call (usage None) still counts as recorded
+    assert run_eval.accounting({"usage": {}, "tool_log": [q_event(None)]}, PRICES)["sql_tokens"] == 0
+
+
+def test_price_file_covers_the_default_pools():
+    from ida.config import get_settings
+    prices, s = run_eval.load_prices(), get_settings()
+    assert set(s.planner_models + s.executor_models + s.sql_llm_models) <= set(prices["models"])
+
+
+def test_unrecorded_local_sql_still_gives_a_complete_cost():
+    old = {"usage": {}, "tool_log": [q_event(None, recorded=False)]}
+    assert run_eval.accounting(old | {"sql_backends": ["finetuned:ida-sql"]}, PRICES)["cost_complete"]
+    assert not run_eval.accounting(old | {"sql_backends": ["llm:a"]}, PRICES)["cost_complete"]
+
+
+def test_run_names_split_by_arch_only_when_both_run():
+    assert run_eval.run_names("r", ["single"]) == {"single": "r"}
+    assert run_eval.run_names("r", ["planner", "single"]) == {"planner": "r_planner", "single": "r_single"}

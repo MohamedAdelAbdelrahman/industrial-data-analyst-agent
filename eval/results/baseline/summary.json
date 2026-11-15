@@ -1,6 +1,6 @@
 {
   "llm": {
-    "passed": 34,
+    "passed": 33,
     "run": 37,
     "failed": {
       "sql_top3_critical_tie": {
@@ -11,6 +11,9 @@
       },
       "mix_critical_vibration_tie": {
         "expect_sql": "missing ['CNC-Mill-05', 'Compressor-01', 'Conveyor-01', 'Conveyor-02', 'Hydraulic-Press-01', 'Hydraulic-Press-02', 'Pump-06']"
+      },
+      "py_compressor03_daily_max": {
+        "numbers": "missing [95.75]"
       }
     },
     "models": {
@@ -19,10 +22,12 @@
       "gemini-3.5-flash-lite": 135,
       "gemini-3.6-flash": 4,
       "gemma-4-26b-a4b-it": 1
-    }
+    },
+    "cost_usd": 0.1206,
+    "sql_tokens_recorded": false
   },
   "finetuned": {
-    "passed": 33,
+    "passed": 32,
     "run": 37,
     "failed": {
       "sql_top3_critical_tie": {
@@ -30,6 +35,9 @@
       },
       "mix_press_oil_temperature_none": {
         "mention": "missing [['none', 'no hydraulic press', 'no HIGH_HIGH', 'did not', 'no such', 'zero', 're:(?<![\\\\d.,-])0(?![\\\\d.,])', 'no presses', 'not have any']]"
+      },
+      "py_compressor03_daily_max": {
+        "numbers": "missing [95.75]"
       },
       "hop_cost_vs_average": {
         "mention": "missing ['Pump-03']"
@@ -43,6 +51,8 @@
       "gemini-3.1-flash-lite": 49,
       "gemini-3.5-flash-lite": 139,
       "gemini-3.6-flash": 5
-    }
+    },
+    "cost_usd": 0.1312,
+    "sql_tokens_recorded": false
   }
 }

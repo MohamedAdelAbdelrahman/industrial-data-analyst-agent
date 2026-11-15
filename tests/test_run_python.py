@@ -121,3 +121,30 @@ def test_process_limit(tool):
               "    print('blocked after', n, type(e).__name__)\n", timeout_s=20)
     assert "blocked after" in out["stdout"]
     assert int(out["stdout"].split()[2]) < 64
+
+
+# ---------- mounts (no Docker daemon needed) ----------
+
+def _offline_sandbox(monkeypatch, tmp_path, **kwargs):
+    from ida.mcp_server.sandbox import PythonSandbox
+    monkeypatch.setattr(docker, "from_env", lambda: None)
+    return PythonSandbox(tmp_path / "artifacts", **kwargs)
+
+
+def test_host_mode_bind_mounts_the_run_folder(monkeypatch, tmp_path):
+    box = _offline_sandbox(monkeypatch, tmp_path)
+    m = box._mount(tmp_path / "run1", "out", "/out", read_only=False)
+    assert (m["Type"], m["Source"], m["Target"], m["ReadOnly"]) == ("bind", str(tmp_path / "run1" / "out"), "/out", False)
+
+
+def test_volume_mode_mounts_only_the_runs_subpath(monkeypatch, tmp_path):
+    """In docker compose the daemon can't see the agent container's paths: mount a subpath of the volume."""
+    box = _offline_sandbox(monkeypatch, tmp_path, work_dir=tmp_path / "work", volume="ida-sandbox-work")
+    m = box._mount(tmp_path / "work" / "ida_run_abc", "code", "/code", read_only=True)
+    assert (m["Type"], m["Source"], m["Target"], m["ReadOnly"]) == ("volume", "ida-sandbox-work", "/code", True)
+    assert m["VolumeOptions"]["Subpath"] == "ida_run_abc/code"
+
+
+def test_volume_without_work_dir_is_rejected(monkeypatch, tmp_path):
+    with pytest.raises(ValueError):
+        _offline_sandbox(monkeypatch, tmp_path, volume="ida-sandbox-work")

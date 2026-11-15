@@ -36,7 +36,8 @@ def _manual_index() -> ManualIndex:
 def _python_tool() -> RunPythonTool:
     from ida.mcp_server.sandbox import PythonSandbox
     s = get_settings()
-    return RunPythonTool(PythonSandbox(s.artifacts_dir), DatasetStore(s.dataset_dir))
+    sandbox = PythonSandbox(s.artifacts_dir, work_dir=s.sandbox_work_dir, volume=s.sandbox_volume)
+    return RunPythonTool(sandbox, DatasetStore(s.dataset_dir))
 
 
 @mcp.resource("schema://sensors", mime_type="text/plain")

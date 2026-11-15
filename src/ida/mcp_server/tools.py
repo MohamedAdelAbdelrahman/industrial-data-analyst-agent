@@ -23,6 +23,10 @@ class QueryDatabaseTool:
         except Exception as e:  # noqa: BLE001 -- tool boundary: API down, rate limit, Ollama not running
             out["error"] = f"SQL generator unavailable ({type(e).__name__}): {str(e)[:300]}"
             return out
+        finally:
+            # after generate(): the LLM pool may have switched to another model for this call
+            out["sql_backend"] = self.generator.name
+            out["sql_usage"] = getattr(self.generator, "last_usage", None)
         try:
             sql = validate_sql(out["sql"])
             res = run_query(self.settings.db_path, sql, self.settings.max_cached_rows,
